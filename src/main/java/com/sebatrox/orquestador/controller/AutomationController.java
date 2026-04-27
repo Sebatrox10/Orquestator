@@ -1,5 +1,6 @@
 package com.sebatrox.orquestador.controller;
 
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,9 +44,35 @@ public class AutomationController {
 
     // n8n enviará las preguntas de chat aquí
     @PostMapping("/preguntar")
-    public ResponseEntity<Map<String, String>> preguntarDesdeN8n(@RequestBody Map<String, String> body) {
-        String respuesta = orquestadorService.buscarContextoParaPregunta(body.get("pregunta"));
-        // Al devolver un Map, Spring lo convierte automáticamente a JSON: {"data": "..."}
-        return ResponseEntity.ok(Map.of("data", respuesta));
+    public ResponseEntity<Map<String, String>> preguntar(@RequestBody Map<String, String> body) {
+        String pregunta = body.get("pregunta");
+        // Extraemos el chatId del body que manda n8n
+        long chatId = Long.parseLong(body.get("chatId").toString()); 
+
+        String respuestaIA = orquestadorService.buscarContextoParaPregunta(pregunta, chatId);
+
+        // DEVOLVEMOS UN JSON, NO UN STRING SOLO
+        return ResponseEntity.ok(Map.of("respuesta", respuestaIA));
+
+    }
+
+    @PostMapping("/sincronizar-busqueda")
+    public ResponseEntity<Void> sincronizar(@RequestBody Map<String, Object> payload) {
+        long chatId = Long.parseLong(payload.get("chatId").toString());
+        List<Map<String, String>> opciones = (List<Map<String, String>>) payload.get("opciones");
+        
+        // Guardamos en tu cache existente
+        orquestadorService.getCacheBusquedas().put(chatId, opciones); 
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/ejecutar-seleccion")
+    public ResponseEntity<Void> ejecutar(@RequestBody Map<String, Object> body) {
+        long chatId = Long.parseLong(body.get("chatId").toString());
+        int index = Integer.parseInt(body.get("index").toString());
+        
+        // Ejecuta TU MÉDOTO MAESTRO que ya funciona
+        orquestadorService.procesarSeleccionArxiv(chatId, index);
+        return ResponseEntity.ok().build();
     }
 }

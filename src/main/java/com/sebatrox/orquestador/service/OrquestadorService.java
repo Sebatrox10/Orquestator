@@ -56,12 +56,12 @@ public class OrquestadorService {
     // 1. Memoria temporal para recordar las últimas búsquedas por chat
     private Map<Long, List<Map<String, String>>> cacheBusquedas = new ConcurrentHashMap<>();
 
+    public Map<Long, List<Map<String, String>>> getCacheBusquedas() {
+        return cacheBusquedas;
+    }
+
     // Herramienta nativa de Spring para hacer llamadas HTTP a otros microservicios
     private final RestTemplate restTemplate = new RestTemplate();
-    
-    // Esta será la dirección de tu microservicio en Python (lo construiremos en FastAPI)
-    private final String PYTHON_WORKER_URL = vectorizarUrl; 
-
 
     private void enviarNotificacion(long chatId, String mensaje) {
         try {
@@ -83,48 +83,36 @@ public class OrquestadorService {
         return ejecutarLogicaProcesamiento(chatId, pdfBytes, nombreDocumento);
     }
 
-    public String buscarContextoParaPregunta(String preguntaDelUsuario) {
+    public String buscarContextoParaPregunta(String preguntaDelUsuario, long chatId) {
         try {
-            // 1. Pedirle a Python que vectorice la PREGUNTA
+            //enviarNotificacion(chatId, "🧠 Consultando mi memoria y tus notas...");
+
             Map<String, String> request = Map.of("texto", preguntaDelUsuario);
+            
+            // USAMOS LA VARIABLE INYECTADA DIRECTAMENTE
             @SuppressWarnings("unchecked")
-            Map<String, List<Double>> response = restTemplate.postForObject(PYTHON_WORKER_URL, request, Map.class);
+            Map<String, List<Double>> response = restTemplate.postForObject(vectorizarUrl, request, Map.class);
 
             List<Double> vectorList = response.get("vector");
-
-            // 2. CONVERSIÓN VITAL: Pasar de List<Double> a float[] (Tu fix)
             float[] floatVector = new float[vectorList.size()];
             for (int i = 0; i < vectorList.size(); i++) {
                 floatVector[i] = vectorList.get(i).floatValue();
             }
 
-            // 3. Buscar en Postgres usando tu nuevo tipo de dato
             List<Fragmento> similares = fragmentoRepository.buscarSimilares(floatVector, 3);
+            if (similares.isEmpty()) return "No encontré información relevante.";
 
-            if (similares.isEmpty()) {
-                return "No encontré información relevante en tus documentos guardados.";
-            }
+            StringBuilder contexto = new StringBuilder();
+            for (Fragmento f : similares) contexto.append(f.getContenido()).append("\n---\n");
 
-            // 1. Juntamos los trozos en un solo String de contexto
-            StringBuilder contextoBuscado = new StringBuilder();
-            for (Fragmento f : similares) {
-                contextoBuscado.append(f.getContenido()).append("\n---\n");
-            }
-
-            // 2. LLAMADA A LA INTELIGENCIA (Python)
-            Map<String, String> sintesisRequest = Map.of(
-                "pregunta", preguntaDelUsuario,
-                "contexto", contextoBuscado.toString()
-            );
+            Map<String, String> sintesisRequest = Map.of("pregunta", preguntaDelUsuario, "contexto", contexto.toString());
 
             @SuppressWarnings("unchecked")
-            Map<String, String> sintesisResponse = restTemplate.postForObject(
-                generarRespuestaUrl, sintesisRequest, Map.class);
+            Map<String, String> sintesisResponse = restTemplate.postForObject(generarRespuestaUrl, sintesisRequest, Map.class);
 
             return sintesisResponse.get("respuesta");
-
         } catch (Exception e) {
-            return "❌ Error en el cerebro de Troxi: " + e.getMessage();
+            return "❌ Error en el cerebro: " + e.getMessage();
         }
     }
 

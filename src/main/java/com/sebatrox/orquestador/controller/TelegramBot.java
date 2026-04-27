@@ -165,7 +165,7 @@ public class TelegramBot extends TelegramLongPollingBot {
                 // Aquí llamas a tu función de RAG que busca en base de datos y habla con Gemini
                 new Thread(() -> {
                     // Reemplaza esto por tu función real de responder preguntas
-                    String respuesta = orquestadorService.buscarContextoParaPregunta(textoUsuario); 
+                    String respuesta = orquestadorService.buscarContextoParaPregunta(textoUsuario, chatId); 
                     enviarMensaje(chatId, respuesta);
                 }).start();
             }
