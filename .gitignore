@@ -1,0 +1,30 @@
+# Compilación y Salida
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Archivos de Log
+*.log
+
+# Configuraciones de IDE (VS Code, IntelliJ, Eclipse)
+.idea/
+.vscode/
+*.iml
+*.iws
+.settings/
+.classpath
+.project
+.factorypath
+
+# Sistema y Temporales
+.DS_Store
+Thumbs.db
+tmp/
+
+# --- SEGURIDAD ---
+# Ignoramos archivos que puedan contener tokens o contraseñas
+.env
+bin/
+application.properties

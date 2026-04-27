@@ -1,0 +1,4 @@
+spring.datasource.url=jdbc:postgresql://localhost:5432/tu_base
+spring.datasource.username=TU_USUARIO_AQUI
+spring.datasource.password=TU_PASSWORD_AQUI
+agente.ia.url=http://localhost:8000
