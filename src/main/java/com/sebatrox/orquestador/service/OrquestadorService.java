@@ -38,8 +38,20 @@ public class OrquestadorService {
     @Value("${OBSIDIAN_PATH}")
     private String baseObsidianPath;
 
-    @Value("${agente.ia.url}")
-    private String agenteUrl;
+    @Value("${agente.ia.url}/vectorizar")
+    private String vectorizarUrl;
+
+    @Value("${agente.ia.url}/generar-respuesta")
+    private String generarRespuestaUrl;
+
+    @Value("${agente.ia.url}/extraer-pdf")
+    private String extraerPdfUrl;
+
+    @Value("${agente.ia.url}/investigar-arxiv")
+    private String investigarArxivUrl;
+
+    @Value("${agente.ia.url}/editar-documento")
+    private String editarDocumentoUrl;
 
     // 1. Memoria temporal para recordar las últimas búsquedas por chat
     private Map<Long, List<Map<String, String>>> cacheBusquedas = new ConcurrentHashMap<>();
@@ -48,7 +60,7 @@ public class OrquestadorService {
     private final RestTemplate restTemplate = new RestTemplate();
     
     // Esta será la dirección de tu microservicio en Python (lo construiremos en FastAPI)
-    private final String PYTHON_WORKER_URL = agenteUrl + "/vectorizar"; 
+    private final String PYTHON_WORKER_URL = vectorizarUrl; 
 
 
     private void enviarNotificacion(long chatId, String mensaje) {
@@ -107,7 +119,7 @@ public class OrquestadorService {
 
             @SuppressWarnings("unchecked")
             Map<String, String> sintesisResponse = restTemplate.postForObject(
-                agenteUrl + "/generar-respuesta", sintesisRequest, Map.class);
+                generarRespuestaUrl, sintesisRequest, Map.class);
 
             return sintesisResponse.get("respuesta");
 
@@ -169,7 +181,7 @@ public class OrquestadorService {
 
             @SuppressWarnings("unchecked")
             Map<String, String> extractionResponse = restTemplate.postForObject(
-                agenteUrl + "/extraer-pdf", body, Map.class);
+                extraerPdfUrl, body, Map.class);
             
             String textoCompleto = extractionResponse.get("texto");
             String temaCarpeta = extractionResponse.get("tema");
@@ -190,7 +202,7 @@ public class OrquestadorService {
                 Map<String, String> vectorRequest = Map.of("texto", trozo);
                 @SuppressWarnings("unchecked")
                 Map<String, List<Double>> vectorResponse = restTemplate.postForObject(
-                    agenteUrl + "/vectorizar", vectorRequest, Map.class);
+                    vectorizarUrl, vectorRequest, Map.class);
 
                 List<Double> vectorList = vectorResponse.get("vector");
                 float[] floatVector = new float[vectorList.size()];
@@ -233,7 +245,7 @@ public class OrquestadorService {
 
             Map<String, String> request = Map.of("texto", tema);
             Map<String, Object> response = restTemplate.postForObject(
-                agenteUrl + "/investigar-arxiv", request, Map.class);
+                investigarArxivUrl, request, Map.class);
             
             if (response != null && response.containsKey("opciones")) {
                 List<Map<String, String>> opciones = (List<Map<String, String>>) response.get("opciones");
@@ -356,7 +368,7 @@ public class OrquestadorService {
             
             @SuppressWarnings("unchecked")
             Map<String, String> response = restTemplate.postForObject(
-                agenteUrl + "/editar-documento", request, Map.class);
+                editarDocumentoUrl, request, Map.class);
                 
             String nuevoContenido = response.get("texto_editado");
             
