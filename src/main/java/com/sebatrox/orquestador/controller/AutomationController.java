@@ -83,4 +83,38 @@ public class AutomationController {
         );
         return ResponseEntity.ok(respuesta);
     }
+
+    // Endpoint para recibir enlaces web desde n8n
+    @PostMapping("/procesar-web")
+    public ResponseEntity<Map<String, String>> procesarWeb(
+            @RequestBody Map<String, Object> payload) {
+        
+        long chatId = Long.parseLong(payload.get("chatId").toString());
+        String url = payload.get("url").toString();
+        String contenidoMarkdown = payload.get("contenidoMarkdown").toString();
+
+        new Thread(() -> {
+            orquestadorService.procesarUrlWeb(chatId, url, contenidoMarkdown);
+        }).start();
+
+        return ResponseEntity.ok(Map.of("status", "ok", "mensaje", "Procesamiento web iniciado"));
+    }
+
+    @PostMapping("/comando-formato")
+    public ResponseEntity<Map<String, String>> comandoFormato(@RequestBody Map<String, String> body) {
+        long chatId = Long.parseLong(body.get("chatId"));
+        String nuevoFormato = body.get("formato"); // Ej: "ieee", "apa", "mentefacto"
+        
+        String respuesta = orquestadorService.cambiarFormato(chatId, nuevoFormato);
+        return ResponseEntity.ok(Map.of("data", respuesta));
+    }
+
+    @PostMapping("/comando-citar")
+    public ResponseEntity<Map<String, String>> comandoCitar(@RequestBody Map<String, String> body) {
+        long chatId = Long.parseLong(body.get("chatId"));
+        String titulo = body.get("titulo");
+        
+        String respuesta = orquestadorService.generarCitaAutomatica(chatId, titulo);
+        return ResponseEntity.ok(Map.of("data", respuesta));
+    }
 }

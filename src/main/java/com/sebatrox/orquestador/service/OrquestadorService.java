@@ -2,8 +2,10 @@ package com.sebatrox.orquestador.service;
 
 import com.sebatrox.orquestador.entity.Documento;
 import com.sebatrox.orquestador.entity.Fragmento;
+import com.sebatrox.orquestador.entity.PortafolioEstrategia;
 import com.sebatrox.orquestador.repository.DocumentoRepository;
 import com.sebatrox.orquestador.repository.FragmentoRepository;
+import com.sebatrox.orquestador.repository.PortafolioEstrategiaRepository;
 import com.pgvector.PGvector;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,6 +34,9 @@ public class OrquestadorService {
     @Autowired
     private DocumentoRepository documentoRepository;
 
+    @Autowired
+    private PortafolioEstrategiaRepository portafolioRepository;
+
     @Value("${telegram.bot.token}")
     private String botToken;
 
@@ -53,11 +58,27 @@ public class OrquestadorService {
     @Value("${agente.ia.url}/editar-documento")
     private String editarDocumentoUrl;
 
+    @Value("${agente.ia.url}/extraer-texto")
+    private String extraerTextoUrl;
+
     // 1. Memoria temporal para recordar las últimas búsquedas por chat
     private Map<Long, List<Map<String, String>>> cacheBusquedas = new ConcurrentHashMap<>();
 
     public Map<Long, List<Map<String, String>>> getCacheBusquedas() {
         return cacheBusquedas;
+    }
+
+    // --- MEMORIA DE PREFERENCIAS DE FORMATO ---
+    private Map<Long, String> preferenciasFormato = new ConcurrentHashMap<>();
+
+    public String cambiarFormato(long chatId, String nuevoFormato) {
+        String formatoLimpio = nuevoFormato.toUpperCase().trim();
+        preferenciasFormato.put(chatId, formatoLimpio);
+        return "✅ ¡Entendido! A partir de ahora redactaré mis respuestas y citas usando el formato: **" + formatoLimpio + "**.";
+    }
+
+    public String getFormatoActual(long chatId) {
+        return preferenciasFormato.getOrDefault(chatId, "APA 7"); // APA 7 por defecto
     }
 
     // Herramienta nativa de Spring para hacer llamadas HTTP a otros microservicios
@@ -122,7 +143,9 @@ public class OrquestadorService {
                 contadorFuente++;
             }
 
-            Map<String, String> sintesisRequest = Map.of("pregunta", preguntaDelUsuario, "contexto", contexto.toString());
+            String formatoActual = getFormatoActual(chatId);
+
+            Map<String, String> sintesisRequest = Map.of("pregunta", preguntaDelUsuario, "contexto", contextoBuscado.toString(), "formato_cita", formatoActual);
 
             @SuppressWarnings("unchecked")
             Map<String, String> sintesisResponse = restTemplate.postForObject(generarRespuestaUrl, sintesisRequest, Map.class);
@@ -156,17 +179,98 @@ public class OrquestadorService {
         try {
             enviarNotificacion(chatId, "⏳ Descargando PDF de Telegram: " + nombreDocumento);
             
-            String getFileUrl = "https://api.telegram.org/bot" + botToken + "/getFile?file_id=" + fileId;
-            Map<String, Object> fileResponse = restTemplate.getForObject(getFileUrl, Map.class);
-            Map<String, Object> result = (Map<String, Object>) fileResponse.get("result");
-            String filePath = (String) result.get("file_path");
-            String downloadUrl = "https://api.telegram.org/file/bot" + botToken + "/" + filePath;
-
-            byte[] pdfBytes = restTemplate.getForObject(downloadUrl, byte[].class);
+            // 1. Usamos la nueva función compartida
+            byte[] pdfBytes = descargarArchivoTelegram(fileId);
             
+            // 2. Ejecuta la lógica académica (Obsidian, Mentefacto, etc.)
             return ejecutarLogicaProcesamiento(chatId, pdfBytes, nombreDocumento);
+            
         } catch (Exception e) {
             enviarNotificacion(chatId, "❌ Error al descargar de Telegram: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean procesarUrlWeb(long chatId, String url, String contenidoMarkdown) {
+        try {
+            enviarNotificacion(chatId, "🌐 Leyendo el contenido de la web...");
+
+            // 1. ENVIAR A PYTHON PARA EXTRAER TEMA, RESUMEN Y METADATOS
+            Map<String, String> requestPython = Map.of(
+                "texto", contenidoMarkdown,
+                "url_origen", url
+            );
+            
+            @SuppressWarnings("unchecked")
+            Map<String, Object> extractionResponse = restTemplate.postForObject(
+                extraerTextoUrl, requestPython, Map.class);
+            
+            // --- ESCUDO ANTI-BLOQUEOS WEB ---
+            String temaCarpeta = "Web_General";
+            String resumenInteligente = "No se pudo extraer el resumen de esta página.";
+            Map<String, Object> metadataDoc = Map.of("titulo", url, "autor", "Desconocido", "anio", "s.f.");
+
+            // Revisamos si Python devolvió un error o un JSON incompleto
+            if (extractionResponse != null && !extractionResponse.containsKey("error")) {
+                if (extractionResponse.containsKey("tema")) temaCarpeta = (String) extractionResponse.get("tema");
+                if (extractionResponse.containsKey("resumen")) resumenInteligente = (String) extractionResponse.get("resumen");
+                
+                if (extractionResponse.containsKey("metadata") && extractionResponse.get("metadata") != null) {
+                    metadataDoc = (Map<String, Object>) extractionResponse.get("metadata");
+                }
+            } else {
+                enviarNotificacion(chatId, "⚠️ La página web tiene bloqueos o formato complejo. Guardando link con valores por defecto...");
+            }
+
+            String tituloDocumento = metadataDoc.getOrDefault("titulo", url).toString();
+            if (tituloDocumento.equals("Desconocido")) {
+                tituloDocumento = "Articulo_Web_" + System.currentTimeMillis();
+            }
+            // ---------------------------------
+
+            enviarNotificacion(chatId, "📌 Tema detectado: **" + temaCarpeta + "**. Vectorizando...");
+
+            // 2. GUARDAR EN POSTGRES
+            Documento doc = new Documento();
+            doc.setTitulo(tituloDocumento);
+            doc.setFechaProcesamiento(LocalDateTime.now());
+            doc.setEstado("PROCESADO");
+            doc.setMetadata(metadataDoc); 
+            doc = documentoRepository.save(doc);
+
+            // 3. FRAGMENTAR Y VECTORIZAR
+            List<String> trozos = fragmentarTexto(contenidoMarkdown);
+            for (String trozo : trozos) {
+                Map<String, String> vectorRequest = Map.of("texto", trozo);
+                @SuppressWarnings("unchecked")
+                Map<String, List<Double>> vectorResponse = restTemplate.postForObject(vectorizarUrl, vectorRequest, Map.class);
+
+                List<Double> vectorList = vectorResponse.get("vector");
+                float[] floatVector = new float[vectorList.size()];
+                for (int i = 0; i < vectorList.size(); i++) { floatVector[i] = vectorList.get(i).floatValue(); }
+
+                Fragmento f = new Fragmento(); 
+                f.setDocumento(doc); 
+                f.setContenido(trozo); 
+                f.setEmbedding(floatVector);
+                fragmentoRepository.save(f);
+            }
+
+            // 4. CREAR NOTA EN OBSIDIAN (DINÁMICA)
+            String formato = getFormatoActual(chatId);
+            
+            // Llamamos al motor. Como es Web, pasamos el contenido Markdown para el bloque oculto y la URL
+            String contenidoMd = generarContenidoMarkdown(tituloDocumento, resumenInteligente, contenidoMarkdown, temaCarpeta, url, formato);
+
+            String rutaCarpetaAbsoluta = generarRutaCarpeta("Investigaciones/" + temaCarpeta);
+            crearNotaEnObsidian(tituloDocumento, contenidoMd, rutaCarpetaAbsoluta);
+
+            enviarNotificacion(chatId, "✅ ¡Artículo web procesado y guardado en Obsidian bajo **" + temaCarpeta + "**!");
+            return true;
+
+        } catch (Exception e) {
+            System.err.println("❌ Error procesando URL: " + e.getMessage());
+            enviarNotificacion(chatId, "❌ Error procesando el link: " + e.getMessage());
             return false;
         }
     }
@@ -231,18 +335,15 @@ public class OrquestadorService {
             }
 
             // 4. CREAR NOTA EN OBSIDIAN
-            String contenidoMd = "---\n" +
-                "tags: [clase, universidad, pdf_procesado, " + temaCarpeta.toLowerCase() + "]\n" +
-                "fecha: " + java.time.LocalDate.now() + "\n---\n" +
-                "# " + nombreDocumento.replace(".pdf", "") + "\n\n" +
-                "> [!success] Memoria RAM de Troxi Activa\n" +
-                "> Documento indexado bajo la categoría **" + temaCarpeta + "**.\n\n" +
-                "## 🧠 Resumen Inteligente\n" + resumenInteligente + "\n\n" +
-                "---\n" +
-                "## ✍️ Apuntes de Clase\n- [ ] \n";
+
+            String formato = getFormatoActual(chatId);
+            String tituloLimpio = nombreDocumento.replace(".pdf", "");
+            
+            // Llamamos al motor. Como es PDF, le pasamos 'null' en contenidoExtra y fuenteUrl
+            String contenidoMd = generarContenidoMarkdown(tituloLimpio, resumenInteligente, null, temaCarpeta, null, formato);
 
             String rutaCarpetaAbsoluta = generarRutaCarpeta("Investigaciones/" + temaCarpeta);
-            crearNotaEnObsidian(nombreDocumento.replace(".pdf", ""), contenidoMd, rutaCarpetaAbsoluta);
+            crearNotaEnObsidian(tituloLimpio, contenidoMd, rutaCarpetaAbsoluta);
 
             enviarNotificacion(chatId, "✅ ¡Listo! La nota de **" + temaCarpeta + "** está en tu Obsidian.");
             return true;
@@ -276,6 +377,8 @@ public class OrquestadorService {
         }
         return new ArrayList<>();
     }
+
+
 
     // 3. El Método Maestro que crea la nota en Obsidian
     public void procesarSeleccionArxiv(long chatId, int indiceSeleccionado) {
@@ -315,20 +418,49 @@ public class OrquestadorService {
         }
     }
 
-    // 4. Plantilla Zettelkasten para tu artículo científico
-    private String armarPlantillaMarkdown(String titulo, String resumen, String url) {
-        return "---\n" +
-               "tags: [investigacion, agente, NLP]\n" +
-               "fecha: " + java.time.LocalDate.now() + "\n" +
-               "---\n" +
-               "# " + titulo + "\n\n" +
-               "**Enlace original (ArXiv):** [PDF Oficial](" + url + ")\n\n" +
-               "## Resumen Inicial\n" +
-               resumen + "\n\n" +
-               "## Mentefacto / Notas\n" +
-               "> [!NOTE] Siguientes Pasos\n" +
-               "> - [ ] Leer el artículo completo en la tablet.\n" +
-               "> - [ ] Extraer métricas clave para el background del paper.";
+    // 4. MOTOR DE PLANTILLAS DINÁMICAS
+    private String generarContenidoMarkdown(String titulo, String resumen, String contenidoExtra, String tema, String fuenteUrl, String formato) {
+        String formatoLimpio = formato.toUpperCase();
+        StringBuilder md = new StringBuilder();
+
+        // 1. Cabecera YAML Frontmatter (Igual para todos)
+        md.append("---\n");
+        md.append("tags: [").append(fuenteUrl != null ? "web" : "pdf").append(", ").append(tema.toLowerCase()).append("]\n");
+        if (fuenteUrl != null) md.append("fuente_original: ").append(fuenteUrl).append("\n");
+        md.append("fecha: ").append(java.time.LocalDate.now()).append("\n");
+        md.append("---\n");
+        md.append("# ").append(titulo).append("\n\n");
+
+        // 2. Estructura Dinámica según la preferencia del usuario
+        if (formatoLimpio.contains("MENTEFACTO")) {
+            md.append("## 🧠 Concepto Central\n").append(resumen).append("\n\n");
+            md.append("### ⬆️ Supraordenada (Clase Superior)\n- \n\n");
+            md.append("### 🚫 Exclusiones\n- \n\n");
+            md.append("### 🔀 Versiones / Isoordinadas\n- \n\n");
+            md.append("### ⬇️ Infraordinadas (Subtipos)\n- \n\n");
+
+        } else if (formatoLimpio.contains("ESTUDIO")) {
+            md.append("## 🧠 Resumen Ejecutivo\n").append(resumen).append("\n\n");
+            md.append("## 🔬 Metodología y Conceptos Clave\n- \n\n");
+            md.append("## 🎯 Conclusiones / Aplicación Práctica\n- \n\n");
+
+        } else {
+            // Formato Estándar (Por defecto)
+            md.append("> [!success] Memoria RAM de Troxi Activa\n");
+            md.append("> Documento indexado bajo la categoría **").append(tema).append("**.\n\n");
+            md.append("## 🧠 Resumen Inteligente\n").append(resumen).append("\n\n");
+            md.append("---\n");
+            md.append("## ✍️ Apuntes de Clase\n- [ ] \n");
+        }
+
+        // 3. Anexo: Contenido original oculto (Solo si es Web)
+        if (contenidoExtra != null && !contenidoExtra.isEmpty()) {
+            md.append("\n---\n");
+            md.append("> [!quote]- 📖 Clic aquí para ver el Contenido Original Extraído\n");
+            md.append(contenidoExtra.replaceAll("(?m)^", "> ")).append("\n");
+        }
+
+        return md.toString();
     }
 
     public String generarRutaCarpeta(String tema) {
@@ -429,4 +561,144 @@ public class OrquestadorService {
         }
         return null;
     }
+
+    public String generarCitaAutomatica(long chatId, String parteDelTitulo) {
+        try {
+            // 1. Buscamos en la base de datos (Postgres)
+            List<Documento> docs = documentoRepository.findByTituloContainingIgnoreCase(parteDelTitulo.trim());
+            if (docs.isEmpty()) {
+                return "❌ No encontré ningún documento en mi base de datos que contenga '" + parteDelTitulo + "' en su título.";
+            }
+            
+            Documento doc = docs.get(0); 
+            Map<String, Object> meta = doc.getMetadata();
+            
+            String tituloInfo = doc.getTitulo();
+            String autorInfo = (meta != null && meta.containsKey("autor")) ? meta.get("autor").toString() : "Desconocido";
+            String anioInfo = (meta != null && meta.containsKey("anio")) ? meta.get("anio").toString() : "s.f.";
+            
+            String formato = getFormatoActual(chatId);
+            
+            // 2. Pedimos la cita a Python
+            String promptCita = "Genera únicamente la referencia bibliográfica estricta en formato " + formato + 
+                                " para el siguiente documento:\n" +
+                                "Título: " + tituloInfo + "\nAutor: " + autorInfo + "\nAño: " + anioInfo;
+                                
+            Map<String, String> request = Map.of("pregunta", promptCita, "contexto", "Generación de bibliografía directa.", "formato_cita", formato);
+            
+            @SuppressWarnings("unchecked")
+            Map<String, String> response = restTemplate.postForObject(generarRespuestaUrl, request, Map.class);
+            String citaGenerada = response.get("respuesta");
+
+            // ==========================================
+            // NÉXUS DE OBSIDIAN: AGREGAR CITA AL ARCHIVO
+            // ==========================================
+            try {
+                // Usamos tu ruta base inyectada y tu función recursiva
+                File carpetaBase = new File(baseObsidianPath); 
+                
+                // Limpiamos el nombre igual que cuando creas la nota originalmente
+                String nombreLimpio = tituloInfo.replaceAll("[^a-zA-Z0-9]", "_");
+                if (nombreLimpio.length() > 60) nombreLimpio = nombreLimpio.substring(0, 60);
+                
+                // REUTILIZAMOS tu función: buscarArchivoRecursivo
+                File archivoEncontrado = buscarArchivoRecursivo(carpetaBase, nombreLimpio + ".md");
+
+                if (archivoEncontrado != null) {
+                    String bloqueCita = "\n\n---\n## 📚 Bibliografía (Troxi)\n" + citaGenerada + "\n";
+                    
+                    // Escribimos al final sin borrar nada (StandardOpenOption.APPEND)
+                    java.nio.file.Files.writeString(
+                        archivoEncontrado.toPath(), 
+                        bloqueCita, 
+                        java.nio.file.StandardOpenOption.APPEND
+                    );
+                    System.out.println("✅ Nota actualizada físicamente en Obsidian.");
+                }
+            } catch (Exception e) {
+                System.err.println("⚠️ No se pudo actualizar la nota física, pero te envío la cita: " + e.getMessage());
+            }
+            // ==========================================
+
+            return "📚 **Referencia (" + formato + "):**\n\n" + citaGenerada;
+            
+        } catch (Exception e) {
+            return "❌ Error al generar la cita: " + e.getMessage();
+        }
+    }
+
+        private byte[] descargarArchivoTelegram(String fileId) throws Exception {
+        String getFileUrl = "https://api.telegram.org/bot" + botToken + "/getFile?file_id=" + fileId;
+        Map<String, Object> fileResponse = restTemplate.getForObject(getFileUrl, Map.class);
+        Map<String, Object> result = (Map<String, Object>) fileResponse.get("result");
+        String filePath = (String) result.get("file_path");
+        String downloadUrl = "https://api.telegram.org/file/bot" + botToken + "/" + filePath;
+
+        return restTemplate.getForObject(downloadUrl, byte[].class);
+    }
+
+    // HERRAMIENTA COMPARTIDA 2: Extrae el texto del PDF usando tu worker en Python
+    private String extraerTextoLimpioDePdf(byte[] pdfBytes, String nombreDocumento) {
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        ByteArrayResource contentsAsResource = new ByteArrayResource(pdfBytes) {
+            @Override public String getFilename() { return nombreDocumento; }
+        };
+        body.add("file", contentsAsResource);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> extractionResponse = restTemplate.postForObject(
+            extraerPdfUrl, body, Map.class);
+            
+        // Solo nos interesa el texto crudo, ignoramos el tema y resumen académico
+        return (String) extractionResponse.get("texto");
+    }
+
+    public String procesarTesisInversion(long chatId, String fileId, String nombreDocumento) {
+        try {
+            enviarNotificacion(chatId, "⏳ Leyendo tu tesis de inversión: " + nombreDocumento);
+
+            // 1. Usamos la herramienta de descarga (Telegram)
+            byte[] pdfBytes = descargarArchivoTelegram(fileId);
+            
+            // 2. Extraemos el texto usando la herramienta compartida (Python)
+            String textoExtraido = extraerTextoLimpioDePdf(pdfBytes, nombreDocumento);
+
+            // 3. El Prompt Cuantitativo para Gemini (Enviado por /generar-respuesta)
+            enviarNotificacion(chatId, "🧠 Analizando la estrategia Core-Satellite...");
+            
+            String promptExtraccion = "Eres un analista cuantitativo. Lee el siguiente texto de una tesis de inversión " +
+                    "y devuelve ÚNICAMENTE un objeto JSON válido con los tickers financieros (símbolos de mercado) a rastrear, " +
+                    "clasificados en dos listas: 'core' (activos principales) y 'satelite' (activos tácticos a corto plazo/futuros). " +
+                    "Asegúrate de traducir los nombres a sus Tickers oficiales (ej. Bitcoin -> BTC, Ethereum -> ETH, Solana -> SOL, Filecoin -> FIL). " +
+                    "Ejemplo de salida: {\"core\": [\"BTC\", \"ETH\", \"ICP\", \"LINK\", \"FIL\", \"SOL\"], \"satelite\": [\"SOL\"]}. " +
+                    "NO agregues explicaciones, markdown, ni texto adicional.\n\n" +
+                    "TEXTO DE LA TESIS:\n" + textoExtraido;
+
+            Map<String, String> request = Map.of(
+                "pregunta", promptExtraccion, 
+                "contexto", "Extracción JSON estricta de activos financieros",
+                "formato_cita", "Ninguno"
+            );
+            
+            @SuppressWarnings("unchecked")
+            Map<String, String> response = restTemplate.postForObject(generarRespuestaUrl, request, Map.class);
+            String jsonExtraido = response.get("respuesta");
+
+            // Limpiar residuos de markdown por si Gemini los pone
+            jsonExtraido = jsonExtraido.replace("```json", "").replace("```", "").trim();
+
+            // --- GUARDAR EN BASE DE DATOS AUTOMÁTICAMENTE ---
+            PortafolioEstrategia portafolio = new PortafolioEstrategia();
+            portafolio.setId(1L); // Siempre actualiza el registro principal
+            portafolio.setJsonActivos(jsonExtraido);
+            portafolioRepository.save(portafolio);
+            // ------------------------------------------------
+
+            return "✅ **Tesis Procesada y Asimilada**\n\nHe extraído el siguiente portafolio de tu documento para rastreo automático:\n`" + jsonExtraido + "`";
+
+        } catch (Exception e) {
+            return "❌ Error procesando la tesis: " + e.getMessage();
+        }
+    }
+
 }
