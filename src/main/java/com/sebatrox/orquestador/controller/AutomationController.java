@@ -71,8 +71,16 @@ public class AutomationController {
         long chatId = Long.parseLong(body.get("chatId").toString());
         int index = Integer.parseInt(body.get("index").toString());
         
-        // Ejecuta TU MÉDOTO MAESTRO que ya funciona
         orquestadorService.procesarSeleccionArxiv(chatId, index);
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/editar-nota")
+    public ResponseEntity<String> editar(@RequestBody Map<String, String> body) {
+        String respuesta = orquestadorService.editarNotaObsidian(
+            body.get("nombreArchivo"), 
+            body.get("instruccion")
+        );
+        return ResponseEntity.ok(respuesta);
     }
 }

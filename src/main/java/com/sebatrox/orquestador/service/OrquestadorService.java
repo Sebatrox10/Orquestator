@@ -103,7 +103,24 @@ public class OrquestadorService {
             if (similares.isEmpty()) return "No encontré información relevante.";
 
             StringBuilder contexto = new StringBuilder();
-            for (Fragmento f : similares) contexto.append(f.getContenido()).append("\n---\n");
+            StringBuilder contextoBuscado = new StringBuilder();
+            int contadorFuente = 1;
+
+            for (Fragmento f : similares) {
+                Documento docAsociado = f.getDocumento(); 
+                Map<String, Object> meta = docAsociado.getMetadata();
+                
+                String tituloInfo = docAsociado.getTitulo();
+                String autorInfo = (meta != null && meta.containsKey("autor")) ? meta.get("autor").toString() : "Desconocido";
+                String anioInfo = (meta != null && meta.containsKey("anio")) ? meta.get("anio").toString() : "s.f.";
+
+                // Armamos el super-prompt de RAG Académico
+                contextoBuscado.append("Fuente [").append(contadorFuente).append("] - ")
+                               .append("Título: ").append(tituloInfo)
+                               .append(" (Autor: ").append(autorInfo).append(", Año: ").append(anioInfo).append("):\n")
+                               .append(f.getContenido()).append("\n\n---\n\n");
+                contadorFuente++;
+            }
 
             Map<String, String> sintesisRequest = Map.of("pregunta", preguntaDelUsuario, "contexto", contexto.toString());
 
@@ -168,12 +185,21 @@ public class OrquestadorService {
             body.add("file", contentsAsResource);
 
             @SuppressWarnings("unchecked")
-            Map<String, String> extractionResponse = restTemplate.postForObject(
+            
+            Map<String, Object> extractionResponse = restTemplate.postForObject(
                 extraerPdfUrl, body, Map.class);
             
-            String textoCompleto = extractionResponse.get("texto");
-            String temaCarpeta = extractionResponse.get("tema");
-            String resumenInteligente = extractionResponse.get("resumen");
+            String textoCompleto = (String) extractionResponse.get("texto");
+            String temaCarpeta = (String) extractionResponse.get("tema");
+            String resumenInteligente = (String) extractionResponse.get("resumen");
+
+            
+            Map<String, Object> metadataDoc;
+            if (extractionResponse.containsKey("metadata")) {
+                metadataDoc = (Map<String, Object>) extractionResponse.get("metadata");
+            } else {
+                metadataDoc = Map.of("autor", "Desconocido", "anio", "s.f.");
+            }
 
             enviarNotificacion(chatId, "📌 Tema detectado: **" + temaCarpeta + "**. Guardando en base de datos...");
 
@@ -182,6 +208,7 @@ public class OrquestadorService {
             doc.setTitulo(nombreDocumento);
             doc.setFechaProcesamiento(LocalDateTime.now());
             doc.setEstado("PROCESADO");
+            doc.setMetadata(metadataDoc); 
             doc = documentoRepository.save(doc);
 
             // 3. FRAGMENTAR Y VECTORIZAR
@@ -258,21 +285,34 @@ public class OrquestadorService {
             return;
         }
 
-        enviarNotificacion(chatId, "📥 Descargando e indexando el paper seleccionado...");
+        enviarNotificacion(chatId, "📥 Descargando PDF oficial de ArXiv para que Troxi lo analice en profundidad...");
 
         Map<String, String> seleccion = opciones.get(indiceSeleccionado);
         String titulo = seleccion.get("titulo");
-        String resumen = seleccion.get("resumen");
         String urlPdf = seleccion.get("url");
 
+        try {
+            // 1. Descargamos el PDF directamente desde la URL de ArXiv usando tu RestTemplate
+            byte[] pdfBytes = restTemplate.getForObject(urlPdf, byte[].class);
+            
+            if (pdfBytes != null) {
+                // 2. Limpiamos el título para que sea un nombre de archivo válido
+                String nombreDocumento = titulo.replaceAll("[^a-zA-Z0-9\\s]", "").trim();
+                if (nombreDocumento.length() > 50) {
+                    nombreDocumento = nombreDocumento.substring(0, 50);
+                }
+                nombreDocumento += ".pdf";
 
-        // Recuperamos el tema y lo usamos para agrupar
-        String temaBusqueda = seleccion.getOrDefault("tema_busqueda", "ArXiv").replace(" ", "_");
-        String rutaCarpeta = generarRutaCarpeta("Investigaciones/ArXiv_" + temaBusqueda);
-        String contenidoMd = armarPlantillaMarkdown(titulo, resumen, urlPdf);
-        
-        crearNotaEnObsidian(titulo, contenidoMd, rutaCarpeta);
-        enviarNotificacion(chatId, "✅ Paper guardado en Obsidian: " + titulo);
+                // 3. ¡LA MAGIA! Le pasamos el PDF a tu cerebro unificado
+                ejecutarLogicaProcesamiento(chatId, pdfBytes, nombreDocumento);
+            } else {
+                enviarNotificacion(chatId, "❌ El archivo descargado está vacío.");
+            }
+            
+        } catch (Exception e) {
+            System.err.println("❌ Error descargando de ArXiv: " + e.getMessage());
+            enviarNotificacion(chatId, "❌ Error al procesar el paper de ArXiv con IA: " + e.getMessage());
+        }
     }
 
     // 4. Plantilla Zettelkasten para tu artículo científico
