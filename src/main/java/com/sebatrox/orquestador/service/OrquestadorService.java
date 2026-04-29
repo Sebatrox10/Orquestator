@@ -40,6 +40,9 @@ public class OrquestadorService {
     @Value("${telegram.bot.token}")
     private String botToken;
 
+    @Value("${telegram.finance.token}")
+    private String financeBotToken;
+
     @Value("${OBSIDIAN_PATH}")
     private String baseObsidianPath;
 
@@ -180,7 +183,7 @@ public class OrquestadorService {
             enviarNotificacion(chatId, "⏳ Descargando PDF de Telegram: " + nombreDocumento);
             
             // 1. Usamos la nueva función compartida
-            byte[] pdfBytes = descargarArchivoTelegram(fileId);
+            byte[] pdfBytes = descargarArchivoTelegram(fileId, this.botToken);
             
             // 2. Ejecuta la lógica académica (Obsidian, Mentefacto, etc.)
             return ejecutarLogicaProcesamiento(chatId, pdfBytes, nombreDocumento);
@@ -627,12 +630,13 @@ public class OrquestadorService {
         }
     }
 
-        private byte[] descargarArchivoTelegram(String fileId) throws Exception {
-        String getFileUrl = "https://api.telegram.org/bot" + botToken + "/getFile?file_id=" + fileId;
+        // HERRAMIENTA COMPARTIDA: Ahora recibe el token a usar
+    private byte[] descargarArchivoTelegram(String fileId, String tokenUsar) throws Exception {
+        String getFileUrl = "https://api.telegram.org/bot" + tokenUsar + "/getFile?file_id=" + fileId;
         Map<String, Object> fileResponse = restTemplate.getForObject(getFileUrl, Map.class);
         Map<String, Object> result = (Map<String, Object>) fileResponse.get("result");
         String filePath = (String) result.get("file_path");
-        String downloadUrl = "https://api.telegram.org/file/bot" + botToken + "/" + filePath;
+        String downloadUrl = "https://api.telegram.org/file/bot" + tokenUsar + "/" + filePath;
 
         return restTemplate.getForObject(downloadUrl, byte[].class);
     }
@@ -658,7 +662,7 @@ public class OrquestadorService {
             enviarNotificacion(chatId, "⏳ Leyendo tu tesis de inversión: " + nombreDocumento);
 
             // 1. Usamos la herramienta de descarga (Telegram)
-            byte[] pdfBytes = descargarArchivoTelegram(fileId);
+            byte[] pdfBytes = descargarArchivoTelegram(fileId, this.financeBotToken);
             
             // 2. Extraemos el texto usando la herramienta compartida (Python)
             String textoExtraido = extraerTextoLimpioDePdf(pdfBytes, nombreDocumento);
