@@ -12,6 +12,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -23,6 +26,8 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+
+
 
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -709,34 +714,69 @@ public class OrquestadorService {
     public String procesarImagenFitness(byte[] imageBytes, String fileName) {
         try {
             System.out.println("🏋️‍♂️ Enviando imagen al Agente Fitness...");
-            
-            // Apuntamos al nuevo contenedor en el puerto 8002
             String url = "http://agente-fitness:8002/api/ia/fitness/leer-imagen";
+
+            // 1. Configuramos las cabeceras correctamente
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            // 2. Creamos un recurso explícito. Spring requiere que sobrescribamos getFilename() 
+            // de lo contrario ignora el byte[] y no lo trata como un archivo adjunto.
+            final String finalFileName = (fileName != null && !fileName.isEmpty()) ? fileName : "captura.jpg";
+            ByteArrayResource imageResource = new ByteArrayResource(imageBytes) {
+                @Override
+                public String getFilename() {
+                    return finalFileName;
+                }
+            };
+
+            // 3. Empaquetamos el body
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("imagen", imageResource);
+
+            HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+
+            // 4. Disparamos la petición
+            ResponseEntity<String> response = restTemplate.postForEntity(url, requestEntity, String.class);
+            
+            System.out.println("✅ Respuesta del Agente Fitness recibida exitosamente.");
+            return response.getBody();
+
+        } catch (Exception e) {
+            System.err.println("❌ Error crítico al llamar al agente fitness: " + e.getMessage());
+            e.printStackTrace(); // Esto nos dará más detalles en los logs si llega a fallar
+            return null;
+        }
+    }
+
+    public String procesarAudioFitness(byte[] audioBytes, String fileName) {
+        try {
+            System.out.println("🎙️ Enviando nota de voz al Agente Fitness...");
+            String url = "http://agente-fitness:8002/api/ia/fitness/leer-audio";
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
-            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            
-            // Empaquetamos la imagen para enviarla
-            ByteArrayResource contentsAsResource = new ByteArrayResource(imageBytes) {
+            final String finalFileName = (fileName != null && !fileName.isEmpty()) ? fileName : "nota_voz.ogg";
+            ByteArrayResource audioResource = new ByteArrayResource(audioBytes) {
                 @Override
                 public String getFilename() {
-                    return fileName != null ? fileName : "entrenamiento.jpg";
+                    return finalFileName;
                 }
             };
-            body.add("imagen", contentsAsResource);
+
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("audio", audioResource); // Ojo aquí: se llama "audio"
 
             HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
-
-            // Disparamos la petición a Python
             ResponseEntity<String> response = restTemplate.postForEntity(url, requestEntity, String.class);
             
-            System.out.println("✅ Respuesta del Agente Fitness recibida.");
-            return response.getBody(); // Esto nos devolverá el JSON mágico
+            System.out.println("✅ Respuesta de audio recibida exitosamente.");
+            return response.getBody();
 
         } catch (Exception e) {
-            System.err.println("❌ Error al llamar al agente fitness: " + e.getMessage());
+            System.err.println("❌ Error crítico al llamar al agente fitness (audio): " + e.getMessage());
+            e.printStackTrace();
             return null;
         }
     }
