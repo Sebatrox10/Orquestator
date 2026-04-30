@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.ResponseEntity;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
@@ -702,6 +703,41 @@ public class OrquestadorService {
 
         } catch (Exception e) {
             return "❌ Error procesando la tesis: " + e.getMessage();
+        }
+    }
+
+    public String procesarImagenFitness(byte[] imageBytes, String fileName) {
+        try {
+            System.out.println("🏋️‍♂️ Enviando imagen al Agente Fitness...");
+            
+            // Apuntamos al nuevo contenedor en el puerto 8002
+            String url = "http://agente-fitness:8002/api/ia/fitness/leer-imagen";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            
+            // Empaquetamos la imagen para enviarla
+            ByteArrayResource contentsAsResource = new ByteArrayResource(imageBytes) {
+                @Override
+                public String getFilename() {
+                    return fileName != null ? fileName : "entrenamiento.jpg";
+                }
+            };
+            body.add("imagen", contentsAsResource);
+
+            HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+
+            // Disparamos la petición a Python
+            ResponseEntity<String> response = restTemplate.postForEntity(url, requestEntity, String.class);
+            
+            System.out.println("✅ Respuesta del Agente Fitness recibida.");
+            return response.getBody(); // Esto nos devolverá el JSON mágico
+
+        } catch (Exception e) {
+            System.err.println("❌ Error al llamar al agente fitness: " + e.getMessage());
+            return null;
         }
     }
 
