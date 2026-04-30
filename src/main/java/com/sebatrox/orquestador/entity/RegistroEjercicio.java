@@ -3,6 +3,11 @@ package com.sebatrox.orquestador.entity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
+import java.util.List;
+
+import org.hibernate.annotations.Type;
+import io.hypersistence.utils.hibernate.type.array.ListArrayType;
+
 @Entity
 @Table(name = "registros_ejercicio")
 public class RegistroEjercicio {
@@ -15,8 +20,13 @@ public class RegistroEjercicio {
     
     // Métricas de Fuerza (Pesas / Calistenia)
     private Integer seriesRealizadas;
-    private String repeticionesStr; // Ej: "12, 10, 10, 8"
-    private String pesosStr; // Ej: "80, 85, 90, 90"
+    @Type(ListArrayType.class)
+    @Column(columnDefinition = "integer[]")
+    private List<Integer> repeticiones; 
+
+    @Type(ListArrayType.class)
+    @Column(columnDefinition = "numeric[]")
+    private List<Double> pesos;
     
     // Métricas de Cardio (Para cuando conectes el Polar o Xiaomi)
     private Double distanciaKm;
@@ -36,10 +46,10 @@ public class RegistroEjercicio {
     public void setNombreEjercicio(String nombreEjercicio) { this.nombreEjercicio = nombreEjercicio; }
     public Integer getSeriesRealizadas() { return seriesRealizadas; }
     public void setSeriesRealizadas(Integer seriesRealizadas) { this.seriesRealizadas = seriesRealizadas; }
-    public String getRepeticionesStr() { return repeticionesStr; }
-    public void setRepeticionesStr(String repeticionesStr) { this.repeticionesStr = repeticionesStr; }
-    public String getPesosStr() { return pesosStr; }
-    public void setPesosStr(String pesosStr) { this.pesosStr = pesosStr; }
+    public List<Integer> getRepeticiones() { return repeticiones; }
+    public void setRepeticiones(List<Integer> repeticiones) { this.repeticiones = repeticiones; }
+    public List<Double> getPesos() { return pesos; }
+    public void setPesos(List<Double> pesos) { this.pesos = pesos; }
     public Double getDistanciaKm() { return distanciaKm; }
     public void setDistanciaKm(Double distanciaKm) { this.distanciaKm = distanciaKm; }
     public Integer getTiempoSegundos() { return tiempoSegundos; }

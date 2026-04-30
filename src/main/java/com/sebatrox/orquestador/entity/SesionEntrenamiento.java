@@ -43,4 +43,11 @@ public class SesionEntrenamiento {
     public void setRutinaBase(RutinaTemplate rutinaBase) { this.rutinaBase = rutinaBase; }
     public List<RegistroEjercicio> getEjerciciosRealizados() { return ejerciciosRealizados; }
     public void setEjerciciosRealizados(List<RegistroEjercicio> ejerciciosRealizados) { this.ejerciciosRealizados = ejerciciosRealizados; }
+
+    @PrePersist
+    protected void onCreate() {
+        if (this.fecha == null) {
+            this.fecha = LocalDate.now();
+        }
+    }
 }

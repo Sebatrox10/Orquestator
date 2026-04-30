@@ -3,6 +3,7 @@ package com.sebatrox.orquestador.service;
 import com.sebatrox.orquestador.entity.Documento;
 import com.sebatrox.orquestador.entity.Fragmento;
 import com.sebatrox.orquestador.entity.PortafolioEstrategia;
+import com.sebatrox.orquestador.entity.SesionEntrenamiento;
 import com.sebatrox.orquestador.repository.DocumentoRepository;
 import com.sebatrox.orquestador.repository.FragmentoRepository;
 import com.sebatrox.orquestador.repository.PortafolioEstrategiaRepository;
@@ -781,4 +782,41 @@ public class OrquestadorService {
         }
     }
 
+    public String consultarCoachFitness(long chatId, String preguntaUsuario) {
+        // 1. Obtener contexto personal (Simplificado)
+        // Aquí llamarías a tus repositorios de SesionEntrenamiento y PerfilUsuario
+        String contextoPersonal = "Usuario con meta de fuerza. RPE promedio reciente: 9.";
+
+        // 2. Obtener contexto científico (Ya tienes esta lógica)
+        // Usamos el vectorizador que ya tienes configurado
+        String contextoCientifico = buscarContextoParaPregunta(preguntaUsuario, chatId);
+
+        // 3. Generar respuesta final con el endpoint de Python
+        Map<String, String> request = Map.of(
+            "pregunta", preguntaUsuario,
+            "contexto", "PERSONAL: " + contextoPersonal + "\nCIENTIFICO: " + contextoCientifico,
+            "formato_cita", "Estilo Coach Deportivo"
+        );
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> response = restTemplate.postForObject(generarRespuestaUrl, request, Map.class);
+        return response.get("respuesta");
+    }
+
+    public String consultaCoachInteligente(long chatId, String mensajeSensacion) {
+        // 1. Recuperamos tus últimas sesiones para ver la tendencia de fatiga
+        List<SesionEntrenamiento> ultimasSesiones = sesionRepository.findTop5ByOrderByFechaDesc(); // Necesitarás crear este método en tu repo
+        
+        // 2. Buscamos en la Bóveda Académica artículos sobre "Entrenamiento y Sensaciones"
+        // Usamos el método que ya tienes, pero filtrando por el tema "Deportes"
+        String cienciaRecuperacion = buscarContextoParaPregunta("autorregulación y fatiga percibida", chatId);[cite: 3]
+
+        // 3. Construimos el Super-Prompt para Python
+        String superPrompt = "PREGUNTA DEL USUARIO: " + mensajeSensacion + "\n\n" +
+                            "DATOS DE SESIONES RECIENTES: " + analizarTendencia(ultimasSesiones) + "\n\n" +
+                            "LITERATURA CIENTÍFICA: " + cienciaRecuperacion;
+
+        // 4. Enviamos a Gemini para una recomendación dosificada
+        return llamarIA(superPrompt);
+    }
 }
