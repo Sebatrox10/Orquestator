@@ -125,4 +125,13 @@ public class FitnessController {
             return ResponseEntity.internalServerError().body(Map.of("error", "Error interno al planificar"));
         }
     }
+
+    @PostMapping("/chat")
+    public ResponseEntity<Map<String, String>> chatLibre(@RequestBody Map<String, Object> payload) {
+        long chatId = Long.parseLong(payload.get("chatId").toString());
+        String mensaje = payload.get("mensaje").toString();
+        
+        String respuesta = orquestadorService.procesarChatInteligente(chatId, mensaje);
+        return ResponseEntity.ok(Map.of("respuesta", respuesta));
+    }
 }

@@ -17,6 +17,8 @@ public class SesionEntrenamiento {
     
     // Biofeedback y Esfuerzo
     private Integer rpeSesion; // Rating of Perceived Exertion (1 al 10)
+    
+    @Column(name = "notas_diario", columnDefinition = "TEXT")
     private String notas; // Ej: "Semana pesada en el trabajo, bajé los pesos un 10%"
 
     // Relación: ¿En qué plantilla te basaste hoy? (Puede ser null si fue un entrenamiento libre)
@@ -47,7 +49,7 @@ public class SesionEntrenamiento {
     @PrePersist
     protected void onCreate() {
         if (this.fecha == null) {
-            this.fecha = LocalDate.now();
+            this.fecha = java.time.LocalDate.now();
         }
     }
 }

@@ -10,4 +10,5 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface SesionEntrenamientoRepository extends JpaRepository<SesionEntrenamiento, Long> {
     List<SesionEntrenamiento> findTop5ByOrderByFechaDesc();
+    SesionEntrenamiento findFirstByOrderByIdDesc();
 }

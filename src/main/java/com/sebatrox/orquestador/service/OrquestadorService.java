@@ -835,14 +835,14 @@ public class OrquestadorService {
             // 3. Obtener Ciencia (Vectores)
             String cienciaRecuperacion = buscarContextoParaPregunta("periodización, macrociclos, fatiga y recuperación", chatId);
 
-            // 4. El Súper-Prompt Definitivo
-            String promptEstrategico = "Eres TroxiFit, un Coach de élite experto en periodización deportiva y alto rendimiento.\n\n" +
-                contextoEstrategico + "\n\n" +
+            // 3. PROMPT ESTRATÉGICO: Fusionamos sensaciones, biometría y ciencia
+            // 3. PROMPT ESTRATÉGICO: Fusionamos sensaciones, biometría y ciencia
+            String promptEstrategico = "Eres un Coach de élite experto en ciencia del deporte y alto rendimiento ejecutivo.\n" +
                 "SENSACIÓN ACTUAL DEL USUARIO: \"" + mensajeSensacion + "\"\n\n" +
                 "HISTORIAL DE ENTRENAMIENTO RECIENTE:\n" + datosRecientes + "\n\n" +
-                "LITERATURA CIENTÍFICA:\n" + cienciaRecuperacion + "\n\n" +
-                "REGLA DE ORO: No des consejos genéricos. Tus recomendaciones deben estar MILIMÉTRICAMENTE alineadas con acercar al usuario a sus 'Metas Activas a Largo Plazo'. Si sus sensaciones indican fatiga pero la meta exige volumen, recomienda recuperación activa que no afecte la meta. Si tiene energía, diseña una sesión que impacte directamente en la consecución de sus objetivos de fuerza o cardio. Sé directo, estructurado y enfocado en resultados.";
-
+                "LITERATURA CIENTÍFICA (Aplica solo lo relevante):\n" + cienciaRecuperacion + "\n\n" +
+                "REGLA DE ORO: Analiza las sensaciones del usuario frente a sus datos. Si el usuario siente mucha energía pero los datos marcan fatiga acumulada (RPEs altos), SÉ FLEXIBLE. No prohíbas entrenar; recomienda una sesión dosificada (ej. alta intensidad pero volumen muy bajo) para cuidar el SNC.\n\n" +
+                "⚠️ RESTRICCIÓN CRÍTICA DE FORMATO: Tu respuesta será enviada por Telegram. DEBE ser ejecutiva, directa y concisa. Límite máximo absoluto de 2500 caracteres (unas 250 palabras). NO uses formato Markdown (ESTRICTAMENTE PROHIBIDO usar asteriscos **, guiones bajos _, o # para negritas o títulos). Usa exclusivamente texto plano y viñetas simples (- o •). Ve directo al plan de acción.";
             Map<String, String> request = Map.of(
                 "pregunta", promptEstrategico,
                 "contexto", "Integración completa: Perfil, Metas, Sesiones y pgvector.",
@@ -927,6 +927,52 @@ public class OrquestadorService {
         } catch (Exception e) {
             System.err.println("❌ Error crítico en planificarSemana: " + e.getMessage());
             return "❌ Error interno al guardar la planificación en la bóveda: " + e.getMessage();
+        }
+    }
+
+    // Memoria a corto plazo para el chat
+    private Map<Long, String> memoriaChat = new ConcurrentHashMap<>();
+
+    public String procesarChatInteligente(long chatId, String mensajeUsuario) {
+        try {
+            // 1. Recuperar el contexto
+            String historial = memoriaChat.getOrDefault(chatId, "Sin historial reciente.");
+            SesionEntrenamiento ultimaSesion = sesionRepository.findFirstByOrderByIdDesc();
+            
+            // 2. Enviar a Python
+            Map<String, Object> requestPython = Map.of(
+                "mensaje", mensajeUsuario,
+                "memoria", historial,
+                "ultima_sesion", ultimaSesion != null ? ultimaSesion : "Ninguna"
+            );
+            
+            // Llama a tu nuevo endpoint de Python
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.postForObject("http://agente-fitness:8002/api/ia/fitness/chat-inteligente", requestPython, Map.class);
+            
+            String intencion = (String) response.get("intencion");
+            String respuestaCoach = (String) response.get("respuesta_telegram");
+
+            // 3. EJECUTAR LA ACCIÓN
+            if ("CORREGIR_SESION".equals(intencion)) {
+                // Aquí aplicamos el "Borrón y Cuenta Nueva"
+                sesionRepository.delete(ultimaSesion); // Borramos la que tenía el error
+                
+                // Mapeamos los datos_corregidos a una nueva SesionEntrenamiento y la guardamos
+                // (Necesitarás usar ObjectMapper de Jackson para convertir el Map 'datos_corregidos' a tu entidad)
+                System.out.println("🔄 Sesión corregida en la base de datos.");
+            } else if ("NUEVA_PREFERENCIA".equals(intencion)) {
+                // Podrías guardar esto en el campo de PerfilUsuario en el futuro
+                System.out.println("⭐ Preferencia aprendida: " + mensajeUsuario);
+            }
+
+            // 4. Actualizar memoria
+            memoriaChat.put(chatId, "Usuario: " + mensajeUsuario + " | Troxi: " + respuestaCoach);
+
+            return respuestaCoach;
+            
+        } catch (Exception e) {
+            return "❌ No pude procesar tu mensaje: " + e.getMessage();
         }
     }
 

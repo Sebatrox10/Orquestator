@@ -22,12 +22,13 @@ public class RegistroEjercicio {
     
     // Métricas de Fuerza (Pesas / Calistenia)
     private Integer seriesRealizadas;
+
     @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(columnDefinition = "integer[]")
+    @Column(name = "repeticiones_arr", columnDefinition = "integer[]")
     private List<Integer> repeticiones;
 
     @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(columnDefinition = "numeric[]")
+    @Column(name = "pesos_arr", columnDefinition = "numeric[]")
     private List<Double> pesos;
     
     // Métricas de Cardio (Para cuando conectes el Polar o Xiaomi)
