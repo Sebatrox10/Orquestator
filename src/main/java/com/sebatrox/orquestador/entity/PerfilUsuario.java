@@ -1,10 +1,8 @@
 package com.sebatrox.orquestador.entity;
 
+import jakarta.persistence.*;
 import java.time.LocalDate;
-
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import java.util.List;
 
 @Entity
 @Table(name = "perfil_usuario")
@@ -12,53 +10,38 @@ public class PerfilUsuario {
     @Id
     private Long id = 1L; // Solo tú
 
-    private Double pesoActual;
+    // --- Demografía y Genética ---
+    private LocalDate fechaNacimiento; // Para que la IA calcule tu edad exacta siempre
+    private String genero; 
+    private Double alturaCm;
+    private String contextura; // Ej: "Mesomorfo", "Ectomorfo"
+
+    // --- Biometría Dinámica ---
+    private Double pesoActualKg;
     private Double porcentajeGrasa;
     private Double masaMuscularKg;
-    
-    // Metas (Ganchos para la IA)
-    private Double metaPeso;
-    private LocalDate fechaMeta;
 
-    // --- Aquí se conectará la Nutrición después ---
-    // private Double caloriasObjetivo;
-    // private Double proteinaGrapas;
+    // Relación: Un perfil puede tener muchas metas
+    @OneToMany(mappedBy = "perfil", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private List<MetaFitness> metas;
 
-    public Long getId() {
-        return id;
-    }
-    public void setId(Long id) {
-        this.id = id;
-    }
-    public Double getPesoActual() {
-        return pesoActual;
-    }
-    public void setPesoActual(Double pesoActual) {
-        this.pesoActual = pesoActual;
-    }
-    public Double getPorcentajeGrasa() {
-        return porcentajeGrasa;
-    }
-    public void setPorcentajeGrasa(Double porcentajeGrasa) {
-        this.porcentajeGrasa = porcentajeGrasa;
-    }
-    public Double getMasaMuscularKg() {
-        return masaMuscularKg;
-    }
-    public void setMasaMuscularKg(Double masaMuscularKg) {
-        this.masaMuscularKg = masaMuscularKg;
-    }
-    public Double getMetaPeso() {
-        return metaPeso;
-    }
-    public void setMetaPeso(Double metaPeso) {
-        this.metaPeso = metaPeso;
-    }
-    public LocalDate getFechaMeta() {
-        return fechaMeta;
-    }
-    public void setFechaMeta(LocalDate fechaMeta) {
-        this.fechaMeta = fechaMeta;
-    }
-    
+    // --- GETTERS Y SETTERS ---
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public LocalDate getFechaNacimiento() { return fechaNacimiento; }
+    public void setFechaNacimiento(LocalDate fechaNacimiento) { this.fechaNacimiento = fechaNacimiento; }
+    public String getGenero() { return genero; }
+    public void setGenero(String genero) { this.genero = genero; }
+    public Double getAlturaCm() { return alturaCm; }
+    public void setAlturaCm(Double alturaCm) { this.alturaCm = alturaCm; }
+    public String getContextura() { return contextura; }
+    public void setContextura(String contextura) { this.contextura = contextura; }
+    public Double getPesoActualKg() { return pesoActualKg; }
+    public void setPesoActualKg(Double pesoActualKg) { this.pesoActualKg = pesoActualKg; }
+    public Double getPorcentajeGrasa() { return porcentajeGrasa; }
+    public void setPorcentajeGrasa(Double porcentajeGrasa) { this.porcentajeGrasa = porcentajeGrasa; }
+    public Double getMasaMuscularKg() { return masaMuscularKg; }
+    public void setMasaMuscularKg(Double masaMuscularKg) { this.masaMuscularKg = masaMuscularKg; }
+    public List<MetaFitness> getMetas() { return metas; }
+    public void setMetas(List<MetaFitness> metas) { this.metas = metas; }
 }

@@ -2,11 +2,17 @@ package com.sebatrox.orquestador.service;
 
 import com.sebatrox.orquestador.entity.Documento;
 import com.sebatrox.orquestador.entity.Fragmento;
+import com.sebatrox.orquestador.entity.MetaFitness;
+import com.sebatrox.orquestador.entity.PerfilUsuario;
 import com.sebatrox.orquestador.entity.PortafolioEstrategia;
+import com.sebatrox.orquestador.entity.RutinaTemplate;
 import com.sebatrox.orquestador.entity.SesionEntrenamiento;
 import com.sebatrox.orquestador.repository.DocumentoRepository;
 import com.sebatrox.orquestador.repository.FragmentoRepository;
+import com.sebatrox.orquestador.repository.MetaFitnessRepository;
+import com.sebatrox.orquestador.repository.PerfilUsuarioRepository;
 import com.sebatrox.orquestador.repository.PortafolioEstrategiaRepository;
+import com.sebatrox.orquestador.repository.SesionEntrenamientoRepository;
 import com.pgvector.PGvector;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +25,9 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -43,6 +52,18 @@ public class OrquestadorService {
 
     @Autowired
     private PortafolioEstrategiaRepository portafolioRepository;
+
+    @Autowired
+    private SesionEntrenamientoRepository sesionRepository;
+
+    @Autowired
+    private PerfilUsuarioRepository perfilRepository;
+
+    @Autowired
+    private MetaFitnessRepository metaRepository;
+
+    @Autowired
+    private FitnessService fitnessService;
 
     @Value("${telegram.bot.token}")
     private String botToken;
@@ -782,41 +803,131 @@ public class OrquestadorService {
         }
     }
 
-    public String consultarCoachFitness(long chatId, String preguntaUsuario) {
-        // 1. Obtener contexto personal (Simplificado)
-        // Aquí llamarías a tus repositorios de SesionEntrenamiento y PerfilUsuario
-        String contextoPersonal = "Usuario con meta de fuerza. RPE promedio reciente: 9.";
-
-        // 2. Obtener contexto científico (Ya tienes esta lógica)
-        // Usamos el vectorizador que ya tienes configurado
-        String contextoCientifico = buscarContextoParaPregunta(preguntaUsuario, chatId);
-
-        // 3. Generar respuesta final con el endpoint de Python
-        Map<String, String> request = Map.of(
-            "pregunta", preguntaUsuario,
-            "contexto", "PERSONAL: " + contextoPersonal + "\nCIENTIFICO: " + contextoCientifico,
-            "formato_cita", "Estilo Coach Deportivo"
-        );
-
-        @SuppressWarnings("unchecked")
-        Map<String, String> response = restTemplate.postForObject(generarRespuestaUrl, request, Map.class);
-        return response.get("respuesta");
-    }
-
-    public String consultaCoachInteligente(long chatId, String mensajeSensacion) {
-        // 1. Recuperamos tus últimas sesiones para ver la tendencia de fatiga
-        List<SesionEntrenamiento> ultimasSesiones = sesionRepository.findTop5ByOrderByFechaDesc(); // Necesitarás crear este método en tu repo
+    // HERRAMIENTA: Formatea las sesiones para que la IA las entienda
+    private String analizarTendencia(List<SesionEntrenamiento> sesiones) {
+        if (sesiones == null || sesiones.isEmpty()) return "No hay datos de sesiones recientes registradas.";
         
-        // 2. Buscamos en la Bóveda Académica artículos sobre "Entrenamiento y Sensaciones"
-        // Usamos el método que ya tienes, pero filtrando por el tema "Deportes"
-        String cienciaRecuperacion = buscarContextoParaPregunta("autorregulación y fatiga percibida", chatId);[cite: 3]
-
-        // 3. Construimos el Super-Prompt para Python
-        String superPrompt = "PREGUNTA DEL USUARIO: " + mensajeSensacion + "\n\n" +
-                            "DATOS DE SESIONES RECIENTES: " + analizarTendencia(ultimasSesiones) + "\n\n" +
-                            "LITERATURA CIENTÍFICA: " + cienciaRecuperacion;
-
-        // 4. Enviamos a Gemini para una recomendación dosificada
-        return llamarIA(superPrompt);
+        StringBuilder sb = new StringBuilder();
+        for (SesionEntrenamiento s : sesiones) {
+            sb.append("- Fecha: ").append(s.getFecha())
+              .append(" | Duración: ").append(s.getDuracionMinutos() != null ? s.getDuracionMinutos() + " min" : "N/A")
+              .append(" | RPE (Esfuerzo 1-10): ").append(s.getRpeSesion() != null ? s.getRpeSesion() : "N/A")
+              .append(" | Notas: ").append(s.getNotas() != null ? s.getNotas() : "Ninguna")
+              .append("\n");
+        }
+        return sb.toString();
     }
+
+    // MÉTODO MAESTRO: El RAG Híbrido (SQL + Vectores)
+    public String consultarCoachInteligente(long chatId, String mensajeSensacion) {
+        try {
+            enviarNotificacion(chatId, "🧠 Analizando tu biometría, metas a largo plazo y recuperación actual...");
+
+            // 1. Obtener Biometría y Metas Activas
+            PerfilUsuario miPerfil = perfilRepository.findById(1L).orElse(null);
+            List<MetaFitness> misMetas = metaRepository.findByPerfilIdAndEstado(1L, "ACTIVA");
+            String contextoEstrategico = estructurarPerfilYMetas(miPerfil, misMetas);
+
+            // 2. Obtener Sesiones Recientes
+            List<SesionEntrenamiento> ultimasSesiones = sesionRepository.findTop5ByOrderByFechaDesc();
+            String datosRecientes = analizarTendencia(ultimasSesiones);
+
+            // 3. Obtener Ciencia (Vectores)
+            String cienciaRecuperacion = buscarContextoParaPregunta("periodización, macrociclos, fatiga y recuperación", chatId);
+
+            // 4. El Súper-Prompt Definitivo
+            String promptEstrategico = "Eres TroxiFit, un Coach de élite experto en periodización deportiva y alto rendimiento.\n\n" +
+                contextoEstrategico + "\n\n" +
+                "SENSACIÓN ACTUAL DEL USUARIO: \"" + mensajeSensacion + "\"\n\n" +
+                "HISTORIAL DE ENTRENAMIENTO RECIENTE:\n" + datosRecientes + "\n\n" +
+                "LITERATURA CIENTÍFICA:\n" + cienciaRecuperacion + "\n\n" +
+                "REGLA DE ORO: No des consejos genéricos. Tus recomendaciones deben estar MILIMÉTRICAMENTE alineadas con acercar al usuario a sus 'Metas Activas a Largo Plazo'. Si sus sensaciones indican fatiga pero la meta exige volumen, recomienda recuperación activa que no afecte la meta. Si tiene energía, diseña una sesión que impacte directamente en la consecución de sus objetivos de fuerza o cardio. Sé directo, estructurado y enfocado en resultados.";
+
+            Map<String, String> request = Map.of(
+                "pregunta", promptEstrategico,
+                "contexto", "Integración completa: Perfil, Metas, Sesiones y pgvector.",
+                "formato_cita", "Estilo Coach Deportivo"
+            );
+
+            @SuppressWarnings("unchecked")
+            Map<String, String> response = restTemplate.postForObject(generarRespuestaUrl, request, Map.class);
+            return response.get("respuesta");
+
+        } catch (Exception e) {
+            return "❌ Error en el análisis estratégico del Coach: " + e.getMessage();
+        }
+    }
+
+    private String estructurarPerfilYMetas(PerfilUsuario perfil, List<MetaFitness> metas) {
+        if (perfil == null) return "No hay perfil biométrico registrado.";
+        
+        StringBuilder sb = new StringBuilder();
+        sb.append("BIOMETRÍA DEL USUARIO:\n");
+        sb.append("- Género: ").append(perfil.getGenero() != null ? perfil.getGenero() : "N/D").append("\n");
+        sb.append("- Contextura: ").append(perfil.getContextura() != null ? perfil.getContextura() : "N/D").append("\n");
+        sb.append("- Peso Actual: ").append(perfil.getPesoActualKg() != null ? perfil.getPesoActualKg() + " kg" : "N/D").append("\n\n");
+
+        sb.append("METAS ACTIVAS A LARGO PLAZO:\n");
+        if (metas == null || metas.isEmpty()) {
+            sb.append("- Ninguna meta activa registrada.\n");
+        } else {
+            for (MetaFitness m : metas) {
+                sb.append("- [").append(m.getTipoMeta()).append("] ")
+                  .append(m.getDescripcion())
+                  .append(" | Objetivo: ").append(m.getValorObjetivo() != null ? m.getValorObjetivo() : "").append(" ").append(m.getUnidadMetrica() != null ? m.getUnidadMetrica() : "")
+                  .append(" | Fecha Límite: ").append(m.getFechaLimite() != null ? m.getFechaLimite() : "Sin fecha")
+                  .append("\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    public String planificarSemana(long chatId, String horarios) {
+        try {
+            enviarNotificacion(chatId, "⏳ Diseñando tu macrociclo semanal a medida...");
+
+            // 1. Obtener tu Biometría y Metas Activas
+            PerfilUsuario miPerfil = perfilRepository.findById(1L).orElse(null);
+            List<MetaFitness> misMetas = metaRepository.findByPerfilIdAndEstado(1L, "ACTIVA");
+            String contextoEstrategico = estructurarPerfilYMetas(miPerfil, misMetas);
+
+            // 2. Preparar el envío a Python
+            Map<String, String> requestPython = Map.of(
+                "contextoEstrategico", contextoEstrategico,
+                "horarios", horarios
+            );
+
+            // URL directa de tu nuevo endpoint en el worker de fitness
+            String urlPlanificador = "http://agente-fitness:8002/api/ia/fitness/planificar";
+            
+            // 3. Llamar a la IA
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.postForObject(urlPlanificador, requestPython, Map.class);
+
+            if (response == null || response.containsKey("error")) {
+                return "❌ Troxi tuvo un problema al generar la planificación. Intenta ser más específica con los horarios.";
+            }
+
+            // 4. La Magia: Convertir el JSON de Python directamente a tus entidades de Java
+            ObjectMapper mapper = new ObjectMapper();
+            List<RutinaTemplate> rutinasGeneradas = mapper.convertValue(
+                response.get("rutinas"), 
+                new TypeReference<List<RutinaTemplate>>() {}
+            );
+
+            // 5. Guardar en PostgreSQL
+            for (RutinaTemplate rutina : rutinasGeneradas) {
+                // Tu FitnessService ya tiene la magia de asociar los Ejercicios a la Rutina por detrás
+                fitnessService.crearRutina(rutina); 
+            }
+
+            // 6. Devolver el mensaje amigable a Telegram
+            return (String) response.get("mensajeCoach");
+
+        } catch (Exception e) {
+            System.err.println("❌ Error crítico en planificarSemana: " + e.getMessage());
+            return "❌ Error interno al guardar la planificación en la bóveda: " + e.getMessage();
+        }
+    }
+
 }

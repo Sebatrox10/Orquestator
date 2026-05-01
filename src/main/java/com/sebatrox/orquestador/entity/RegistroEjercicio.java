@@ -5,8 +5,10 @@ import jakarta.persistence.*;
 
 import java.util.List;
 
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.Type;
-import io.hypersistence.utils.hibernate.type.array.ListArrayType;
+import org.hibernate.type.SqlTypes;
+
 
 @Entity
 @Table(name = "registros_ejercicio")
@@ -20,11 +22,11 @@ public class RegistroEjercicio {
     
     // Métricas de Fuerza (Pesas / Calistenia)
     private Integer seriesRealizadas;
-    @Type(ListArrayType.class)
+    @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(columnDefinition = "integer[]")
-    private List<Integer> repeticiones; 
+    private List<Integer> repeticiones;
 
-    @Type(ListArrayType.class)
+    @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(columnDefinition = "numeric[]")
     private List<Double> pesos;
     

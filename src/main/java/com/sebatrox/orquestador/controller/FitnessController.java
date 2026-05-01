@@ -3,6 +3,8 @@ package com.sebatrox.orquestador.controller;
 import com.sebatrox.orquestador.entity.RutinaTemplate;
 import com.sebatrox.orquestador.service.FitnessService;
 
+import java.util.Map;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -81,6 +83,46 @@ public class FitnessController {
         } catch (Exception e) {
             System.err.println("❌ [ERROR] Falló la recepción del audio: " + e.getMessage());
             return ResponseEntity.internalServerError().body("{\"error\": \"Error interno al leer el audio\"}");
+        }
+    }
+
+    @PostMapping("/consultar-coach")
+    public ResponseEntity<Map<String, String>> consultarCoach(@RequestBody Map<String, Object> payload) {
+        try {
+            System.out.println("🧠 [JAVA] Recibiendo consulta para el Coach Inteligente...");
+            
+            // Extraemos los datos del JSON que enviará n8n
+            long chatId = Long.parseLong(payload.get("chatId").toString());
+            String mensajeSensacion = payload.get("mensaje").toString();
+
+            // Llamamos a tu método maestro en el OrquestadorService
+            String respuestaCoach = orquestadorService.consultarCoachInteligente(chatId, mensajeSensacion);
+
+            // Spring Boot convertirá automáticamente este Map a un JSON: {"respuesta": "Lo que dijo Gemini..."}
+            return ResponseEntity.ok(Map.of("respuesta", respuestaCoach));
+
+        } catch (Exception e) {
+            System.err.println("❌ [ERROR] Falló la consulta al Coach: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("error", "Error interno al consultar la IA"));
+        }
+    }
+
+    @PostMapping("/planificar")
+    public ResponseEntity<Map<String, String>> planificarEntrenamiento(@RequestBody Map<String, Object> payload) {
+        try {
+            System.out.println("🗓️ [JAVA] Recibiendo solicitud de planificación semanal...");
+            
+            long chatId = Long.parseLong(payload.get("chatId").toString());
+            String horarios = payload.get("horarios").toString();
+
+            // Llamamos al Orquestador
+            String respuestaCoach = orquestadorService.planificarSemana(chatId, horarios);
+
+            return ResponseEntity.ok(Map.of("respuesta", respuestaCoach));
+
+        } catch (Exception e) {
+            System.err.println("❌ [ERROR] Falló el endpoint de planificación: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("error", "Error interno al planificar"));
         }
     }
 }
