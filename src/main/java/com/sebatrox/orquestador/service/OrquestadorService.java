@@ -697,54 +697,6 @@ public class OrquestadorService {
         return (String) extractionResponse.get("texto");
     }
 
-    public String procesarTesisInversion(long chatId, String fileId, String nombreDocumento) {
-        try {
-            enviarNotificacion(chatId, "⏳ Leyendo tu tesis de inversión: " + nombreDocumento);
-
-            // 1. Usamos la herramienta de descarga (Telegram)
-            byte[] pdfBytes = descargarArchivoTelegram(fileId, this.financeBotToken);
-            
-            // 2. Extraemos el texto usando la herramienta compartida (Python)
-            String textoExtraido = extraerTextoLimpioDePdf(pdfBytes, nombreDocumento);
-
-            // 3. El Prompt Cuantitativo para Gemini (Enviado por /generar-respuesta)
-            enviarNotificacion(chatId, "🧠 Analizando la estrategia Core-Satellite...");
-            
-            String promptExtraccion = "Eres un analista cuantitativo. Lee el siguiente texto de una tesis de inversión " +
-                    "y devuelve ÚNICAMENTE un objeto JSON válido con los tickers financieros (símbolos de mercado) a rastrear, " +
-                    "clasificados en dos listas: 'core' (activos principales) y 'satelite' (activos tácticos a corto plazo/futuros). " +
-                    "Asegúrate de traducir los nombres a sus Tickers oficiales (ej. Bitcoin -> BTC, Ethereum -> ETH, Solana -> SOL, Filecoin -> FIL). " +
-                    "Ejemplo de salida: {\"core\": [\"BTC\", \"ETH\", \"ICP\", \"LINK\", \"FIL\", \"SOL\"], \"satelite\": [\"SOL\"]}. " +
-                    "NO agregues explicaciones, markdown, ni texto adicional.\n\n" +
-                    "TEXTO DE LA TESIS:\n" + textoExtraido;
-
-            Map<String, String> request = Map.of(
-                "pregunta", promptExtraccion, 
-                "contexto", "Extracción JSON estricta de activos financieros",
-                "formato_cita", "Ninguno"
-            );
-            
-            @SuppressWarnings("unchecked")
-            Map<String, String> response = restTemplate.postForObject(generarRespuestaUrl, request, Map.class);
-            String jsonExtraido = response.get("respuesta");
-
-            // Limpiar residuos de markdown por si Gemini los pone
-            jsonExtraido = jsonExtraido.replace("```json", "").replace("```", "").trim();
-
-            // --- GUARDAR EN BASE DE DATOS AUTOMÁTICAMENTE ---
-            PortafolioEstrategia portafolio = new PortafolioEstrategia();
-            portafolio.setId(1L); // Siempre actualiza el registro principal
-            portafolio.setJsonActivos(jsonExtraido);
-            portafolioRepository.save(portafolio);
-            // ------------------------------------------------
-
-            return "✅ **Tesis Procesada y Asimilada**\n\nHe extraído el siguiente portafolio de tu documento para rastreo automático:\n`" + jsonExtraido + "`";
-
-        } catch (Exception e) {
-            return "❌ Error procesando la tesis: " + e.getMessage();
-        }
-    }
-
     public String procesarImagenFitness(byte[] imageBytes, String fileName) {
         try {
             System.out.println("🏋️‍♂️ Enviando imagen al Agente Fitness...");
@@ -1291,6 +1243,90 @@ public class OrquestadorService {
 
         } catch (Exception e) {
             return "❌ Error al generar la dieta: " + e.getMessage();
+        }
+    }
+
+    // --- MÓDULO FINANCIERO: RAG APLICADO A INVERSIONES ---
+
+
+    public String procesarTesisInversion(long chatId, String fileId, String nombreDocumento) {
+        try {
+            enviarNotificacion(chatId, "⏳ Leyendo tu tesis de inversión: " + nombreDocumento);
+
+            // 1. Usamos la herramienta de descarga (Telegram)
+            byte[] pdfBytes = descargarArchivoTelegram(fileId, this.financeBotToken);
+            
+            // 2. Extraemos el texto usando la herramienta compartida (Python)
+            String textoExtraido = extraerTextoLimpioDePdf(pdfBytes, nombreDocumento);
+
+            // 3. El Prompt Cuantitativo para Gemini (Enviado por /generar-respuesta)
+            enviarNotificacion(chatId, "🧠 Analizando la estrategia Core-Satellite...");
+            
+            String promptExtraccion = "Eres un analista cuantitativo. Lee el siguiente texto de una tesis de inversión " +
+                    "y devuelve ÚNICAMENTE un objeto JSON válido con los tickers financieros (símbolos de mercado) a rastrear, " +
+                    "clasificados en dos listas: 'core' (activos principales) y 'satelite' (activos tácticos a corto plazo/futuros). " +
+                    "Asegúrate de traducir los nombres a sus Tickers oficiales (ej. Bitcoin -> BTC, Ethereum -> ETH, Solana -> SOL, Filecoin -> FIL). " +
+                    "Ejemplo de salida: {\"core\": [\"BTC\", \"ETH\", \"ICP\", \"LINK\", \"FIL\", \"SOL\"], \"satelite\": [\"SOL\"]}. " +
+                    "NO agregues explicaciones, markdown, ni texto adicional.\n\n" +
+                    "TEXTO DE LA TESIS:\n" + textoExtraido;
+
+            Map<String, String> request = Map.of(
+                "pregunta", promptExtraccion, 
+                "contexto", "Extracción JSON estricta de activos financieros",
+                "formato_cita", "Ninguno"
+            );
+            
+            @SuppressWarnings("unchecked")
+            Map<String, String> response = restTemplate.postForObject(generarRespuestaUrl, request, Map.class);
+            String jsonExtraido = response.get("respuesta");
+
+            // Limpiar residuos de markdown por si Gemini los pone
+            jsonExtraido = jsonExtraido.replace("```json", "").replace("```", "").trim();
+
+            // --- GUARDAR EN BASE DE DATOS AUTOMÁTICAMENTE ---
+            PortafolioEstrategia portafolio = new PortafolioEstrategia();
+            portafolio.setId(1L); // Siempre actualiza el registro principal
+            portafolio.setJsonActivos(jsonExtraido);
+            portafolioRepository.save(portafolio);
+            // ------------------------------------------------
+
+            return "✅ **Tesis Procesada y Asimilada**\n\nHe extraído el siguiente portafolio de tu documento para rastreo automático:\n`" + jsonExtraido + "`";
+
+        } catch (Exception e) {
+            return "❌ Error procesando la tesis: " + e.getMessage();
+        }
+    }
+    
+    public String evaluarSmallCapConRag(long chatId, String datosProyecto) {
+        try {
+            enviarNotificacion(chatId, "🧠 Buscando en mi base de conocimientos financieros los criterios para analizar Small Caps...");
+
+            // 1. Buscamos en tu base de datos vectorial (Tesis, PDFs de Tokenomics, etc.)
+            // Le pedimos a tu cerebro que busque criterios de evaluación
+            String contextoEstrategico = buscarContextoParaPregunta("criterios de inversión tokenomics liquidez small caps", chatId);
+
+            // 2. Empaquetar y enviar a Python
+            Map<String, Object> requestPython = Map.of(
+                "datos_proyecto", datosProyecto,  // Lo que envía n8n (Marketcap, volumen, etc)
+                "contexto_rag", contextoEstrategico // Lo que el Agente Académico leyó en los PDFs
+            );
+            
+            enviarNotificacion(chatId, "📊 Evaluando el token con los criterios extraídos de tus documentos...");
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.postForObject(
+                "http://agente-financiero:8001/analizar-small-cap", // Ajusta el puerto de tu worker financiero
+                requestPython, 
+                Map.class
+            );
+            
+            // 3. Extraemos el análisis de Gemini
+            String analisisFinal = (String) response.get("analisis_telegram");
+
+            return analisisFinal;
+            
+        } catch (Exception e) {
+            return "❌ Error en el análisis RAG de la Small Cap: " + e.getMessage();
         }
     }
     
