@@ -1,5 +1,6 @@
 package com.sebatrox.orquestador.service;
 
+import com.sebatrox.orquestador.entity.ComidaDiaria;
 import com.sebatrox.orquestador.entity.Documento;
 import com.sebatrox.orquestador.entity.Fragmento;
 import com.sebatrox.orquestador.entity.MetaFitness;
@@ -7,6 +8,7 @@ import com.sebatrox.orquestador.entity.PerfilUsuario;
 import com.sebatrox.orquestador.entity.PortafolioEstrategia;
 import com.sebatrox.orquestador.entity.RutinaTemplate;
 import com.sebatrox.orquestador.entity.SesionEntrenamiento;
+import com.sebatrox.orquestador.repository.ComidaDiariaRepository;
 import com.sebatrox.orquestador.repository.DocumentoRepository;
 import com.sebatrox.orquestador.repository.FragmentoRepository;
 import com.sebatrox.orquestador.repository.MetaFitnessRepository;
@@ -35,6 +37,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import java.io.IOException;
 import java.nio.file.*;
 import java.io.File;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -67,6 +70,12 @@ public class OrquestadorService {
 
     @Autowired
     private FitnessService fitnessService;
+
+    @Autowired
+    private NutricionService nutricionService;
+
+    @Autowired
+    private ComidaDiariaRepository comidaRepository;
 
     @Value("${telegram.bot.token}")
     private String botToken;
@@ -1087,6 +1096,201 @@ public class OrquestadorService {
 
         } catch (Exception e) {
             return "❌ Error al exportar bitácora: " + e.getMessage();
+        }
+    }
+
+
+    // ---------------------------------------------------------
+    // MÓDULO NUTRICIÓN: COMUNICACIÓN PYTHON Y OBSIDIAN
+    // ---------------------------------------------------------
+
+    public String procesarImagenNutricion(byte[] imageBytes, String fileName) {
+        try {
+            System.out.println("🥗 Enviando imagen de comida al Agente de Nutrición...");
+            // Asumimos que el agente de nutrición correrá en el puerto 8003
+            String url = "http://agente-nutricion:8003/api/ia/nutricion/analizar-plato";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            final String finalFileName = (fileName != null && !fileName.isEmpty()) ? fileName : "plato.jpg";
+            ByteArrayResource imageResource = new ByteArrayResource(imageBytes) {
+                @Override
+                public String getFilename() {
+                    return finalFileName;
+                }
+            };
+
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("imagen", imageResource);
+
+            HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+            ResponseEntity<String> response = restTemplate.postForEntity(url, requestEntity, String.class);
+            
+            System.out.println("✅ Análisis de macros recibido exitosamente.");
+            return response.getBody();
+
+        } catch (Exception e) {
+            System.err.println("❌ Error crítico al llamar al agente de nutrición: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public String generarRutaNutricion(String subcarpeta) {
+        try {
+            Path baseDir = Paths.get(baseObsidianPath, "Nutricion", subcarpeta);
+            Files.createDirectories(baseDir);
+            return baseDir.toString(); 
+        } catch (IOException e) {
+            return baseObsidianPath; 
+        }
+    }
+
+    public String exportarBitacoraNutricionalObsidian(long chatId) {
+        try {
+            enviarNotificacion(chatId, "📊 Recopilando tus macros del día para Obsidian...");
+            
+            // 1. Obtener las comidas de hoy usando el nuevo servicio
+            LocalDate hoy = java.time.LocalDate.now();
+            List<ComidaDiaria> comidas = nutricionService.obtenerComidasDelDia(1L, hoy);
+            
+            if(comidas == null || comidas.isEmpty()) {
+                return "No has registrado ninguna comida hoy para exportar.";
+            }
+
+            // 2. Calcular los totales
+            double tCalorias = 0, tProteinas = 0, tCarbos = 0, tGrasas = 0;
+            StringBuilder detalleComidas = new StringBuilder();
+
+            for(ComidaDiaria c : comidas) {
+                tCalorias += c.getCalorias() != null ? c.getCalorias() : 0;
+                tProteinas += c.getProteinas() != null ? c.getProteinas() : 0;
+                tCarbos += c.getCarbohidratos() != null ? c.getCarbohidratos() : 0;
+                tGrasas += c.getGrasas() != null ? c.getGrasas() : 0;
+
+                detalleComidas.append("- **").append(c.getTipoComida()).append("**: ")
+                              .append(c.getDescripcion())
+                              .append(" (*").append(c.getCalorias()).append(" kcal*)\n");
+            }
+
+            // 3. Crear el Markdown para Obsidian
+            StringBuilder md = new StringBuilder();
+            md.append("---\n");
+            md.append("tags: [nutricion, bitacora, macros]\n");
+            md.append("fecha_registro: ").append(hoy).append("\n");
+            md.append("---\n");
+            md.append("# 🍎 Resumen Nutricional Diario\n\n");
+
+            md.append("## 📊 Macros Totales\n");
+            md.append("- **Calorías:** ").append(String.format("%.1f", tCalorias)).append(" kcal\n");
+            md.append("- **Proteínas:** ").append(String.format("%.1f", tProteinas)).append(" g\n");
+            md.append("- **Carbohidratos:** ").append(String.format("%.1f", tCarbos)).append(" g\n");
+            md.append("- **Grasas:** ").append(String.format("%.1f", tGrasas)).append(" g\n\n");
+
+            md.append("## 🍽️ Detalle de Comidas\n");
+            md.append(detalleComidas.toString()).append("\n");
+            
+            md.append("---\n");
+            md.append("## 📝 Notas de Ajuste (Coach Inteligente)\n");
+            md.append("- [ ] *Troxi: Espacio reservado para feedback de recuperación de entrenamiento.*\n");
+
+            // 4. Guardar en Obsidian
+            String titulo = "Macros_" + hoy.toString();
+            String ruta = generarRutaNutricion("Bitacoras_Diarias");
+            crearNotaEnObsidian(titulo, md.toString(), ruta);
+
+            return "✅ ¡Historial nutricional exportado con éxito!\nRevisa la carpeta **Nutricion/Bitacoras_Diarias** en tu Obsidian.";
+
+        } catch (Exception e) {
+            return "❌ Error al exportar bitácora nutricional: " + e.getMessage();
+        }
+    }
+
+    // Memoria independiente para el agente de nutrición
+    private Map<Long, String> memoriaChatNutricion = new ConcurrentHashMap<>();
+
+    // --- RAMA 2 DEL SWITCH (CHAT NORMAL CON RAG) ---
+    public String procesarChatNutricion(long chatId, String mensajeUsuario) {
+        try {
+            // 1. Extraer memoria a corto plazo
+            String historial = memoriaChatNutricion.getOrDefault(chatId, "Sin historial reciente.");
+            
+            // 2. ¡LA MAGIA DEL RAG! Buscamos en tus artículos usando el método que ya tienes
+            String contextoCientifico = buscarContextoParaPregunta(mensajeUsuario, chatId);
+
+            // 3. Empaquetar y enviar a Python
+            Map<String, Object> requestPython = Map.of(
+                "mensaje", mensajeUsuario,
+                "memoria", historial,
+                "contexto_rag", contextoCientifico
+            );
+            
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.postForObject(
+                "http://agente-nutricion:8003/api/ia/nutricion/chat-inteligente", 
+                requestPython, 
+                Map.class
+            );
+            
+            String respuestaCoach = (String) response.get("respuesta_telegram");
+
+            // 4. Actualizar memoria
+            memoriaChatNutricion.put(chatId, "Usuario: " + mensajeUsuario + " | TroxiNutri: " + respuestaCoach);
+
+            return respuestaCoach;
+            
+        } catch (Exception e) {
+            return "❌ Error cognitivo en TroxiNutri: " + e.getMessage();
+        }
+    }
+
+    // --- RAMA 1 DEL SWITCH (COMANDO /dieta) ---
+    public String generarDietaDelDia(long chatId) {
+        try {
+            enviarNotificacion(chatId, "⏳ Calculando tus macros y consultando tu plan de entrenamiento...");
+
+            // 1. Obtenemos tu biometría y metas (Reutilizamos tu método maestro)
+            PerfilUsuario miPerfil = perfilRepository.findById(1L).orElse(null);
+            List<MetaFitness> misMetas = metaRepository.findByPerfilIdAndEstado(1L, "ACTIVA");
+            String contextoEstrategico = estructurarPerfilYMetas(miPerfil, misMetas);
+
+            // 2. Enviar a Python para generar el plan
+            Map<String, String> requestPython = Map.of(
+                "contextoEstrategico", contextoEstrategico
+            );
+            
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.postForObject(
+                "http://agente-nutricion:8003/api/ia/nutricion/planificar-dieta", 
+                requestPython, 
+                Map.class
+            );
+
+            if (response == null || response.containsKey("error")) {
+                return "❌ TroxiNutri tuvo un problema al generar la dieta.";
+            }
+
+            // 3. Formatear la respuesta para Telegram
+            Map<String, Integer> macros = (Map<String, Integer>) response.get("macrosObjetivo");
+            List<Map<String, String>> comidas = (List<Map<String, String>>) response.get("comidasSugeridas");
+
+            StringBuilder mensaje = new StringBuilder();
+            mensaje.append("🎯 **Tu Plan Nutricional de Hoy**\n\n");
+            mensaje.append("_").append(response.get("resumenEstrategico")).append("_\n\n");
+            mensaje.append("📊 **Macros:**\n");
+            mensaje.append("🔥 ").append(macros.get("calorias")).append(" kcal | 🥩 ").append(macros.get("proteinas")).append("g Prot | 🍚 ").append(macros.get("carbohidratos")).append("g Carb | 🥑 ").append(macros.get("grasas")).append("g Grasa\n\n");
+            
+            mensaje.append("🍽️ **Sugerencias:**\n");
+            for (Map<String, String> c : comidas) {
+                mensaje.append("**").append(c.get("comida")).append("**:\n");
+                mensaje.append("🔸 ").append(c.get("opcion1")).append("\n");
+            }
+
+            return mensaje.toString();
+
+        } catch (Exception e) {
+            return "❌ Error al generar la dieta: " + e.getMessage();
         }
     }
     
