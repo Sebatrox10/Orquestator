@@ -3,6 +3,7 @@ package com.sebatrox.orquestador.controller;
 import com.sebatrox.orquestador.entity.RutinaTemplate;
 import com.sebatrox.orquestador.service.FitnessService;
 
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +15,7 @@ import org.springframework.http.MediaType;
 import com.sebatrox.orquestador.service.OrquestadorService;
 
 import com.sebatrox.orquestador.entity.SesionEntrenamiento;
+import com.sebatrox.orquestador.repository.SesionEntrenamientoRepository;
 
 @RestController
 @RequestMapping("/api/fitness")
@@ -24,6 +26,38 @@ public class FitnessController {
 
     @Autowired
     private OrquestadorService orquestadorService;
+
+    @Autowired
+    private SesionEntrenamientoRepository sesionRepository;
+
+    @Autowired
+    private com.sebatrox.orquestador.repository.RutinaTemplateRepository rutinaRepository;
+
+    @GetMapping("/sesiones")
+    public ResponseEntity<List<SesionEntrenamiento>> obtenerHistorial() {
+        // Traemos las últimas 30 sesiones ordenadas por fecha (las más recientes al final para la gráfica)
+        List<SesionEntrenamiento> historial = sesionRepository.findTop30ByOrderByIdAsc();
+        return ResponseEntity.ok(historial);
+    }
+
+    @GetMapping("/rutinas")
+    public ResponseEntity<List<RutinaTemplate>> obtenerRutinasActivas() {
+        // Traemos todas las rutinas (puedes ajustarlo luego para traer solo las de la semana actual)
+        List<RutinaTemplate> rutinas = rutinaRepository.findAll();
+        return ResponseEntity.ok(rutinas);
+    }
+
+    @DeleteMapping("/limpiar-datos")
+    public ResponseEntity<Map<String, String>> limpiarBaseDeDatos() {
+        try {
+            // Borramos el historial y las planificaciones de prueba
+            sesionRepository.deleteAll();
+            rutinaRepository.deleteAll();
+            return ResponseEntity.ok(Map.of("mensaje", "✅ Base de datos reseteada."));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "Error al borrar: " + e.getMessage()));
+        }
+    }
 
     @PostMapping("/rutinas/template")
     public ResponseEntity<RutinaTemplate> crearRutinaTemplate(@RequestBody RutinaTemplate rutina) {
@@ -134,4 +168,12 @@ public class FitnessController {
         String respuesta = orquestadorService.procesarChatInteligente(chatId, mensaje);
         return ResponseEntity.ok(Map.of("respuesta", respuesta));
     }
+
+    @PostMapping("/exportar")
+    public ResponseEntity<Map<String, String>> exportarObsidian(@RequestBody Map<String, Object> payload) {
+        long chatId = Long.parseLong(payload.get("chatId").toString());
+        String respuesta = orquestadorService.exportarBitacoraObsidian(chatId);
+        return ResponseEntity.ok(Map.of("respuesta", respuesta));
+    }
+
 }

@@ -29,6 +29,9 @@ import org.springframework.util.MultiValueMap;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+
 import java.io.IOException;
 import java.nio.file.*;
 import java.io.File;
@@ -886,47 +889,78 @@ public class OrquestadorService {
         try {
             enviarNotificacion(chatId, "⏳ Diseñando tu macrociclo semanal a medida...");
 
-            // 1. Obtener tu Biometría y Metas Activas
             PerfilUsuario miPerfil = perfilRepository.findById(1L).orElse(null);
             List<MetaFitness> misMetas = metaRepository.findByPerfilIdAndEstado(1L, "ACTIVA");
             String contextoEstrategico = estructurarPerfilYMetas(miPerfil, misMetas);
 
-            // 2. Preparar el envío a Python
             Map<String, String> requestPython = Map.of(
                 "contextoEstrategico", contextoEstrategico,
                 "horarios", horarios
             );
 
-            // URL directa de tu nuevo endpoint en el worker de fitness
             String urlPlanificador = "http://agente-fitness:8002/api/ia/fitness/planificar";
             
-            // 3. Llamar a la IA
             @SuppressWarnings("unchecked")
             Map<String, Object> response = restTemplate.postForObject(urlPlanificador, requestPython, Map.class);
 
             if (response == null || response.containsKey("error")) {
-                return "❌ Troxi tuvo un problema al generar la planificación. Intenta ser más específica con los horarios.";
+                return "❌ Troxi tuvo un problema al generar la planificación.";
             }
 
-            // 4. La Magia: Convertir el JSON de Python directamente a tus entidades de Java
+            // Guardar en BD (Tu lógica original)
             ObjectMapper mapper = new ObjectMapper();
             List<RutinaTemplate> rutinasGeneradas = mapper.convertValue(
                 response.get("rutinas"), 
                 new TypeReference<List<RutinaTemplate>>() {}
             );
 
-            // 5. Guardar en PostgreSQL
             for (RutinaTemplate rutina : rutinasGeneradas) {
-                // Tu FitnessService ya tiene la magia de asociar los Ejercicios a la Rutina por detrás
                 fitnessService.crearRutina(rutina); 
             }
 
-            // 6. Devolver el mensaje amigable a Telegram
-            return (String) response.get("mensajeCoach");
+            // --- ¡NUEVO: MAGIA DE OBSIDIAN! ---
+            enviarNotificacion(chatId, "📝 Redactando tu rutina en Obsidian...");
+            
+            StringBuilder md = new StringBuilder();
+            md.append("---\n");
+            md.append("tags: [fitness, rutina, planificacion]\n");
+            md.append("fecha_creacion: ").append(java.time.LocalDate.now()).append("\n");
+            md.append("---\n");
+            md.append("# 🗓️ Planificación Semanal de Entrenamiento\n\n");
+
+            // Leemos el JSON crudo para armar el Markdown a prueba de fallos
+            List<Map<String, Object>> rutinasMap = (List<Map<String, Object>>) response.get("rutinas");
+            
+            for (Map<String, Object> rut : rutinasMap) {
+                md.append("## 🔹 ").append(rut.get("nombre")).append("\n");
+                md.append("**Tipo:** ").append(rut.get("tipo")).append(" | **Enfoque:** ").append(rut.get("descripcion")).append("\n\n");
+                
+                md.append("| Ejercicio | Series | Repeticiones | Peso Sugerido | Descanso |\n");
+                md.append("|---|---|---|---|---|\n");
+                
+                List<Map<String, Object>> ejercicios = (List<Map<String, Object>>) rut.get("ejercicios");
+                if(ejercicios != null) {
+                    for (Map<String, Object> ej : ejercicios) {
+                        md.append("| **").append(ej.get("nombreEjercicio")).append("** | ")
+                          .append(ej.get("series")).append(" | ")
+                          .append(ej.get("repeticionesBase")).append(" | ")
+                          .append(ej.get("pesoSugerido")).append(" kg/lbs | ")
+                          .append(ej.get("descansoSegundos")).append("s |\n");
+                    }
+                }
+                md.append("\n---\n\n");
+            }
+
+            String titulo = "Rutina_" + java.time.LocalDate.now();
+            String ruta = generarRutaFitness("Planificaciones");
+            crearNotaEnObsidian(titulo, md.toString(), ruta);
+            // ---------------------------------
+
+            return response.get("mensajeCoach") + "\n\n✅ *Tu rutina detallada ya está guardada en tu Obsidian (Fitness/Planificaciones).*";
 
         } catch (Exception e) {
             System.err.println("❌ Error crítico en planificarSemana: " + e.getMessage());
-            return "❌ Error interno al guardar la planificación en la bóveda: " + e.getMessage();
+            return "❌ Error al planificar: " + e.getMessage();
         }
     }
 
@@ -935,45 +969,125 @@ public class OrquestadorService {
 
     public String procesarChatInteligente(long chatId, String mensajeUsuario) {
         try {
-            // 1. Recuperar el contexto
+            // 1. Recuperar el contexto histórico
             String historial = memoriaChat.getOrDefault(chatId, "Sin historial reciente.");
             SesionEntrenamiento ultimaSesion = sesionRepository.findFirstByOrderByIdDesc();
             
-            // 2. Enviar a Python
+            // 2. Empaquetar y Enviar a Python
             Map<String, Object> requestPython = Map.of(
                 "mensaje", mensajeUsuario,
                 "memoria", historial,
                 "ultima_sesion", ultimaSesion != null ? ultimaSesion : "Ninguna"
             );
             
-            // Llama a tu nuevo endpoint de Python
             @SuppressWarnings("unchecked")
-            Map<String, Object> response = restTemplate.postForObject("http://agente-fitness:8002/api/ia/fitness/chat-inteligente", requestPython, Map.class);
+            Map<String, Object> response = restTemplate.postForObject(
+                "http://agente-fitness:8002/api/ia/fitness/chat-inteligente", 
+                requestPython, 
+                Map.class
+            );
             
             String intencion = (String) response.get("intencion");
             String respuestaCoach = (String) response.get("respuesta_telegram");
 
-            // 3. EJECUTAR LA ACCIÓN
-            if ("CORREGIR_SESION".equals(intencion)) {
-                // Aquí aplicamos el "Borrón y Cuenta Nueva"
-                sesionRepository.delete(ultimaSesion); // Borramos la que tenía el error
+            // 3. EJECUTAR LA ACCIÓN COGNITIVA
+            if ("CORREGIR_SESION".equals(intencion) && response.containsKey("datos_corregidos")) {
                 
-                // Mapeamos los datos_corregidos a una nueva SesionEntrenamiento y la guardamos
-                // (Necesitarás usar ObjectMapper de Jackson para convertir el Map 'datos_corregidos' a tu entidad)
-                System.out.println("🔄 Sesión corregida en la base de datos.");
+                // Eliminamos la sesión con el error (ej. el pulso de 317)
+                if (ultimaSesion != null) {
+                    sesionRepository.delete(ultimaSesion); 
+                }
+                
+                // Preparamos el conversor con soporte para fechas
+                ObjectMapper mapper = new ObjectMapper();
+                mapper.registerModule(new JavaTimeModule()); // Vital para LocalDate
+                mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+                
+                // Transformamos el JSON corregido de vuelta a tu Entidad
+                SesionEntrenamiento sesionCorregida = mapper.convertValue(
+                    response.get("datos_corregidos"), 
+                    SesionEntrenamiento.class
+                );
+                
+                // --- NUEVO: EVITAR LA CRISIS DE IDENTIDAD DE HIBERNATE ---
+                // Forzamos a que sea un registro completamente nuevo
+                sesionCorregida.setId(null); 
+                
+                // Limpiamos también los IDs de los ejercicios internos para que nazcan de nuevo
+                if (sesionCorregida.getEjerciciosRealizados() != null) {
+                    for (com.sebatrox.orquestador.entity.RegistroEjercicio ej : sesionCorregida.getEjerciciosRealizados()) {
+                        ej.setId(null); 
+                    }
+                }
+                // ---------------------------------------------------------
+                
+                // Usamos el FitnessService para asegurar que las listas de ejercicios queden bien atadas
+                fitnessService.registrarSesion(sesionCorregida);
+                System.out.println("🔄 [TROXI] Sesión corregida y guardada exitosamente.");
+                
             } else if ("NUEVA_PREFERENCIA".equals(intencion)) {
-                // Podrías guardar esto en el campo de PerfilUsuario en el futuro
-                System.out.println("⭐ Preferencia aprendida: " + mensajeUsuario);
+                System.out.println("⭐ [TROXI] Preferencia aprendida: " + mensajeUsuario);
             }
 
-            // 4. Actualizar memoria
+            // 4. Actualizar memoria de conversación
             memoriaChat.put(chatId, "Usuario: " + mensajeUsuario + " | Troxi: " + respuestaCoach);
 
             return respuestaCoach;
             
         } catch (Exception e) {
-            return "❌ No pude procesar tu mensaje: " + e.getMessage();
+            System.err.println("❌ Error en chat inteligente: " + e.getMessage());
+            return "❌ No pude procesar tu mensaje de forma inteligente: " + e.getMessage();
         }
     }
 
+    public String generarRutaFitness(String subcarpeta) {
+        try {
+            // Esto creará una carpeta "Fitness/Planificaciones" o "Fitness/Resumenes" en tu bóveda
+            Path baseDir = Paths.get(baseObsidianPath, "Fitness", subcarpeta);
+            Files.createDirectories(baseDir);
+            return baseDir.toString(); 
+        } catch (IOException e) {
+            return baseObsidianPath; // Fallback
+        }
+    }
+
+    public String exportarBitacoraObsidian(long chatId) {
+        try {
+            enviarNotificacion(chatId, "📊 Recopilando tu historial para Obsidian...");
+            
+            // Traemos las últimas 5 o 7 sesiones de la base de datos
+            List<SesionEntrenamiento> sesiones = sesionRepository.findTop5ByOrderByFechaDesc();
+            if(sesiones == null || sesiones.isEmpty()) {
+                return "No tienes entrenamientos recientes para exportar.";
+            }
+
+            StringBuilder md = new StringBuilder();
+            md.append("---\n");
+            md.append("tags: [fitness, bitacora, tracker]\n");
+            md.append("fecha_exportacion: ").append(java.time.LocalDate.now()).append("\n");
+            md.append("---\n");
+            md.append("# 📊 Bitácora de Entrenamientos Completados\n\n");
+
+            for(SesionEntrenamiento s : sesiones) {
+                md.append("## 🏋️ Sesión: ").append(s.getFecha() != null ? s.getFecha() : "Sin fecha").append("\n");
+                md.append("- **Duración:** ").append(s.getDuracionMinutos()).append(" min\n");
+                md.append("- **RPE (Fatiga SNC):** ").append(s.getRpeSesion() != null ? s.getRpeSesion() : "N/D").append("/10\n");
+                if (s.getNotas() != null && !s.getNotas().isBlank()) {
+                    md.append("- **Notas del Coach/Usuario:** *\"").append(s.getNotas()).append("\"*\n");
+                }
+                md.append("\n");
+                // Si quieres listar los ejercicios reales, puedes iterar s.getEjerciciosRealizados() aquí
+            }
+
+            String titulo = "Bitacora_Semana_" + java.time.LocalDate.now();
+            String ruta = generarRutaFitness("Resumenes");
+            crearNotaEnObsidian(titulo, md.toString(), ruta);
+
+            return "✅ ¡Historial exportado con éxito!\nRevisa la carpeta **Fitness/Resumenes** en tu Obsidian.";
+
+        } catch (Exception e) {
+            return "❌ Error al exportar bitácora: " + e.getMessage();
+        }
+    }
+    
 }
